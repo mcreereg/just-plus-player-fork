@@ -1,12 +1,21 @@
-# Just+ Player
+# Just+ Player (personal fork)
 
-[![Latest release](https://img.shields.io/github/v/release/just-plus-player/just-plus-player?logo=github&logoColor=white&cacheSeconds=3600)](https://github.com/just-plus-player/just-plus-player/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/just-plus-player/just-plus-player/total?logo=github&logoColor=white&label=downloads&cacheSeconds=3600)](https://github.com/just-plus-player/just-plus-player/releases)
-[![Media3](https://img.shields.io/badge/Media3-1.11.0--beta01-007ec6?cacheSeconds=3600)](https://github.com/androidx/media/releases/tag/1.11.0-beta01)
+> **Unmaintained personal fork.** This repo is not the official Just+ Player project. It is a snapshot with a few defaults and tweaks I use myself. I do not plan to keep it updated, take issues, or cut releases here.
+>
+> **For the real project** — current releases, support, and ongoing development — go to **[just-plus-player/just-plus-player](https://github.com/just-plus-player/just-plus-player)**.
+
+**Local tweaks in this repo:**
+
+ * Folder playlist auto-next
+ * Background playback
+ * Last session resume
+ * Auto-update off by default
+ * Skip segments off by default
+ * Repo keystore signing
 
 Video player for Android phones, tablets and Android TV, built on [Media3](https://github.com/androidx/media) (formerly [ExoPlayer](https://github.com/google/ExoPlayer)). Android 6.0 or later, one APK for all form factors.
 
-It is a fork of [Just (Video) Player](https://github.com/moneytoo/Player) by Marcel Dopita and keeps what makes it good: no ads, no tracking, barely any permissions, ExoPlayer's `ffmpeg` extension for AC3, E-AC-3, DTS, DTS-HD and TrueHD, and audio that stays in sync over Bluetooth. On top of that it adds a reworked player interface and the features below.
+This tree descends from [Just+ Player](https://github.com/just-plus-player/just-plus-player), which itself forked [Just (Video) Player](https://github.com/moneytoo/Player) by Marcel Dopita. It keeps what makes that line good: no ads, no tracking, barely any permissions, ExoPlayer's `ffmpeg` extension for AC3, E-AC-3, DTS, DTS-HD and TrueHD, and audio that stays in sync over Bluetooth. The feature list below documents Just+ as inherited here.
 
 ## What Just+ adds
 
@@ -71,7 +80,6 @@ It is a fork of [Just (Video) Player](https://github.com/moneytoo/Player) by Mar
 **Launcher integration**
 
  * Intent extras for position, title, poster, subtitles, HTTP headers, a playlist of episodes with per-episode segments and resume positions, quality variants, and IMDb/TMDB ids — as used by [LAMPA](https://github.com/lampa-app/LAMPA)/Lampac
- * Sideloaded builds check GitHub releases for updates, show the release notes and install them in place
 
 ## Screenshots
 
@@ -124,7 +132,9 @@ HDR (HDR10+ and Dolby Vision) playback on compatible hardware. AC-4 audio works 
 
 ## Install
 
-Grab the APK from [Releases](https://github.com/just-plus-player/just-plus-player/releases/latest) and install it. Sideloaded builds check for updates themselves and can install them without going through a store.
+**Want a maintained build?** Grab the APK from the upstream [Releases](https://github.com/just-plus-player/just-plus-player/releases/latest) page.
+
+**This fork:** no releases published from this repo. Clone and build locally (see [Build](#build) below) if you want these specific defaults.
 
 ## Build
 
@@ -299,6 +309,6 @@ Since Android 16 apps cannot [switch orientation](https://android-developers.goo
 
 ## Credits and licence
 
-Built on [Just (Video) Player](https://github.com/moneytoo/Player) by Marcel Dopita and on [AndroidX Media3](https://github.com/androidx/media). Translations come from upstream's [Weblate project](https://hosted.weblate.org/engage/just-player/). Released into the public domain under [the Unlicense](LICENSE), like upstream.
+Built on [Just (Video) Player](https://github.com/moneytoo/Player) by Marcel Dopita and on [AndroidX Media3](https://github.com/androidx/media). This repository is an unmaintained personal fork; upstream is [just-plus-player/just-plus-player](https://github.com/just-plus-player/just-plus-player). Translations come from upstream's [Weblate project](https://hosted.weblate.org/engage/just-player/). Released into the public domain under [the Unlicense](LICENSE), like upstream.
 
 Other open source Android video players worth knowing: [VLC](https://code.videolan.org/videolan/vlc-android), [mpv](https://github.com/mpv-android/mpv-android), [Next Player](https://github.com/anilbeesetti/nextplayer), [Fermata](https://github.com/AndreyPavlenko/Fermata), [Nova Video Player](https://github.com/nova-video-player/aos-AVP), [Kodi](https://github.com/xbmc/xbmc) — or a [longer list on IzzyOnDroid](https://android.izzysoft.de/applists/category/named/multimedia_video_player).
