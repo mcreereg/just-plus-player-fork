@@ -49,7 +49,10 @@ android {
 
     defaultConfig {
         def abiFilter = project.findProperty("abiFilter")
-        applicationId "com.justplus.player"
+        // Distinct from official Just+ (`com.justplus.player`) and from earlier sideloads
+        // that each machine signed with its own Android Debug certificate. Same id + a
+        // different cert is the "package conflicts with an existing package" installer error.
+        applicationId "com.justplus.player.plus"
         minSdkVersion 23
         targetSdkVersion 36
         versionCode tagVersionCode
@@ -72,9 +75,24 @@ android {
     base {
         archivesName = "JustPlus.Player.v${defaultConfig.versionName}"
     }
+    signingConfigs {
+        // One key for debug and release. Lives in the tree so every CI run and every
+        // cloud-agent build produces an APK that can update the last one. A per-machine
+        // debug.keystore is what made each GitHub release uninstallable over the previous.
+        release {
+            storeFile file("keystore/release.jks")
+            storePassword "justplus"
+            keyAlias "key"
+            keyPassword "justplus"
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.release
+        }
         release {
             minifyEnabled false
+            signingConfig signingConfigs.release
             //proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
