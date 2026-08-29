@@ -319,6 +319,30 @@ class SubtitleUtils {
         return null;
     }
 
+    /** All videos in {@code dir}, sorted by filename (same order as {@link #findNext}). */
+    public static List<Uri> listVideosInDirectory(DocumentFile dir) {
+        final List<Uri> uris = new ArrayList<>();
+        if (dir == null) {
+            return uris;
+        }
+        try {
+            final DocumentFile[] list = dir.listFiles();
+            Arrays.sort(list, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+            for (DocumentFile file : list) {
+                final String name = file.getName();
+                if (name != null && name.startsWith(".")) {
+                    continue;
+                }
+                if (isVideoFile(file)) {
+                    uris.add(file.getUri());
+                }
+            }
+        } catch (NullPointerException e) {
+            e.printStackTrace();
+        }
+        return uris;
+    }
+
     public static boolean isVideoFile(DocumentFile file) {
         return file.isFile() && file.getType().startsWith("video/");
     }

@@ -813,6 +813,8 @@ public class PlayerActivity extends Activity {
     private static final String STATE_API_SESSION = "apiSession";
     boolean apiAccess;
     boolean apiAccessPartial;
+    /** Local folder opened as an ExoPlayer playlist (auto-advance), not a launcher api session. */
+    boolean folderPlaylist;
     String apiTitle;
     Uri apiThumbnailUri;
     String apiSegments;
@@ -3294,6 +3296,7 @@ public class PlayerActivity extends Activity {
     void resetApiAccess() {
         apiAccess = false;
         apiAccessPartial = false;
+        folderPlaylist = false;
         intentReturnResult = false;
         // The end-of-playback flag belongs to the session being reported. Left set, the next launcher
         // session inherits it and finish() reports a video watched to its end that the user just started.
@@ -10398,6 +10401,7 @@ public class PlayerActivity extends Activity {
             if (!startingSubs.isEmpty()) {
                 mediaItemBuilder.setSubtitleConfigurations(startingSubs);
             }
+            buildFolderPlaylistIfPossible();
             if (!apiMediaItems.isEmpty()) {
                 // The playlist items are built from the intent and never saw the remembered subtitle, so
                 // the one item about to play gets it here. The rest pick up their own when they start.
@@ -10438,7 +10442,7 @@ public class PlayerActivity extends Activity {
 
             ((DoubleTapPlayerView)playerView).setDoubleTapEnabled(true);
 
-            if (!apiAccess) {
+            if (!apiAccess && apiMediaItems.isEmpty()) {
                 if (nextUriThread != null) {
                     nextUriThread.interrupt();
                 }
@@ -11020,6 +11024,9 @@ public class PlayerActivity extends Activity {
                 // subtitles from being drawn over this one.
                 clearSubtitleTimeline();
                 cancelSubtitleSearch();
+                if (folderPlaylist) {
+                    searchSubtitles();
+                }
             }
             // The new item opens its own audio output; a restart latched on the old one must not tear it down.
             // The armer goes with it: a stall at the end of an episode would otherwise land on the next one's
@@ -13219,38 +13226,95 @@ public class PlayerActivity extends Activity {
     Uri findNext() {
         // TODO: Unify with searchSubtitles()
         if (mPrefs.scopeUri != null || isTvBox) {
-            DocumentFile video = null;
-            File videoRaw = null;
-
-            if (!isTvBox && mPrefs.scopeUri != null) {
-                if ("com.android.externalstorage.documents".equals(mPrefs.mediaUri.getHost())) {
-                    // Fast search based on path in uri
-                    video = SubtitleUtils.findUriInScope(this, mPrefs.scopeUri, mPrefs.mediaUri);
-                } else {
-                    // Slow search based on matching metadata, no path in uri
-                    // Provider "com.android.providers.media.documents" when using "Videos" tab in file picker
-                    DocumentFile fileScope = DocumentFile.fromTreeUri(this, mPrefs.scopeUri);
-                    DocumentFile fileMedia = DocumentFile.fromSingleUri(this, mPrefs.mediaUri);
-                    video = SubtitleUtils.findDocInScope(fileScope, fileMedia);
-                }
-            } else if (isTvBox) {
-                videoRaw = new File(mPrefs.mediaUri.getSchemeSpecificPart());
-                video = DocumentFile.fromFile(videoRaw);
-            }
-
+            final DocumentFile video = resolveCurrentVideoDocument();
             if (video != null) {
-                DocumentFile next;
-                if (!isTvBox) {
-                    next = SubtitleUtils.findNext(video);
-                } else {
-                    File parentRaw = videoRaw.getParentFile();
-                    DocumentFile dir = DocumentFile.fromFile(parentRaw);
-                    next = SubtitleUtils.findNext(video, dir);
-                }
+                final DocumentFile next = SubtitleUtils.findNext(video);
                 if (next != null) {
                     return next.getUri();
                 }
             }
+        }
+        return null;
+    }
+
+    /**
+     * Builds a playlist from every video in the current file's folder so ExoPlayer auto-advances
+     * between them (same alphabetical order as the manual "next file" button).
+     */
+    private void buildFolderPlaylistIfPossible() {
+        folderPlaylist = false;
+        if (apiAccess || apiAccessPartial || mPrefs.mediaUri == null) {
+            return;
+        }
+        if (Utils.isSupportedNetworkUri(mPrefs.mediaUri)) {
+            return;
+        }
+        final List<Uri> uris = listFolderVideoUris();
+        if (uris.size() <= 1) {
+            return;
+        }
+        apiMediaItems.clear();
+        apiPlaylistStartIndex = 0;
+        apiPlaylistSegments.clear();
+        for (final Uri uri : uris) {
+            if (Prefs.isSameDocument(mPrefs.mediaUri, uri)) {
+                apiPlaylistStartIndex = apiMediaItems.size();
+            }
+            String title = Utils.getFileName(PlayerActivity.this, uri);
+            final MediaItem.Builder itemBuilder = new MediaItem.Builder().setUri(uri);
+            if (title != null) {
+                final MediaMetadata mediaMetadata = new MediaMetadata.Builder()
+                        .setTitle(title)
+                        .setDisplayTitle(title)
+                        .build();
+                itemBuilder.setMediaMetadata(mediaMetadata);
+            }
+            apiMediaItems.add(itemBuilder.build());
+            apiPlaylistSegments.add(null);
+        }
+        if (apiMediaItems.size() <= 1) {
+            apiMediaItems.clear();
+            apiPlaylistSegments.clear();
+            return;
+        }
+        apiPlaylistPositions = new long[apiMediaItems.size()];
+        for (int i = 0; i < apiPlaylistPositions.length; i++) {
+            apiPlaylistPositions[i] = C.TIME_UNSET;
+        }
+        folderPlaylist = true;
+    }
+
+    private List<Uri> listFolderVideoUris() {
+        final DocumentFile video = resolveCurrentVideoDocument();
+        if (video == null) {
+            return Collections.emptyList();
+        }
+        DocumentFile dir = video.getParentFile();
+        if (dir == null && isTvBox && ContentResolver.SCHEME_FILE.equals(mPrefs.mediaUri.getScheme())) {
+            final File parent = new File(mPrefs.mediaUri.getSchemeSpecificPart()).getParentFile();
+            if (parent != null) {
+                dir = DocumentFile.fromFile(parent);
+            }
+        }
+        return SubtitleUtils.listVideosInDirectory(dir);
+    }
+
+    /** Resolves the playing file to a {@link DocumentFile}, shared by folder playlist and find-next. */
+    private DocumentFile resolveCurrentVideoDocument() {
+        if (mPrefs.mediaUri == null) {
+            return null;
+        }
+        if (mPrefs.scopeUri != null) {
+            if ("com.android.externalstorage.documents".equals(mPrefs.mediaUri.getHost())
+                    || "org.courville.nova.provider".equals(mPrefs.mediaUri.getHost())) {
+                return SubtitleUtils.findUriInScope(this, mPrefs.scopeUri, mPrefs.mediaUri);
+            }
+            final DocumentFile fileScope = DocumentFile.fromTreeUri(this, mPrefs.scopeUri);
+            final DocumentFile fileMedia = DocumentFile.fromSingleUri(this, mPrefs.mediaUri);
+            return SubtitleUtils.findDocInScope(fileScope, fileMedia);
+        }
+        if (isTvBox && ContentResolver.SCHEME_FILE.equals(mPrefs.mediaUri.getScheme())) {
+            return DocumentFile.fromFile(new File(mPrefs.mediaUri.getSchemeSpecificPart()));
         }
         return null;
     }
