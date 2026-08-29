@@ -2527,6 +2527,10 @@ public class PlayerActivity extends Activity {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !isInPip()) {
                 setVideoDisabledForBackground(true);
             }
+            playerView.removeCallbacks(frameRateGiveUpRunnable);
+            if (displayManager != null && displayListener != null) {
+                displayManager.unregisterDisplayListener(displayListener);
+            }
             cancelLoadWatchdog();
             playerView.removeCallbacks(resumeWatchdogRunnable);
             Utils.log("background: keeping playback");
