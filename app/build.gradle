@@ -21,6 +21,16 @@ def tagVersionCode = 1
 def versionMatcher = (gitDescribe.replaceFirst(/^v/, '') =~ /(\d+)\.(\d+)\.(\d+)/)
 if (versionMatcher.find()) {
     tagVersionCode = versionMatcher.group(1).toInteger() * 1000000 + versionMatcher.group(2).toInteger() * 1000 + versionMatcher.group(3).toInteger()
+} else {
+    // SHA tags (v84b68d6) are not semver, so the branch above never matches and every
+    // sideload kept versionCode 1 — the package installer then leaves the old APK in place.
+    try {
+        tagVersionCode = providers.exec {
+            commandLine 'git', 'rev-list', '--count', 'HEAD'
+            ignoreExitValue = true
+        }.standardOutput.asText.get().trim().toInteger()
+    } catch (ignored) {
+    }
 }
 
 // local.properties is not exposed as Gradle project properties (AGP only reads sdk.dir from it),
