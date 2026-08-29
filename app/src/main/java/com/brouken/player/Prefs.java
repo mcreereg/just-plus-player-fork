@@ -833,6 +833,18 @@ class Prefs {
     // id, different string. The id is what has to match — the tail of the path alone drops the
     // storage volume, which is the only thing telling Movies/1.mkv on a memory card apart from
     // Movies/1.mkv in internal storage. Null for anything that is not a document uri.
+    static boolean isSameDocument(final Uri a, final Uri b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        if (a.equals(b)) {
+            return true;
+        }
+        final String idA = documentIdentity(a);
+        final String idB = documentIdentity(b);
+        return idA != null && idA.equals(idB);
+    }
+
     private static String documentIdentity(final Uri uri) {
         if (!ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
             return null;
