@@ -22,6 +22,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -161,10 +162,13 @@ class Prefs {
     final SharedPreferences mSharedPreferences;
 
     public Uri mediaUri;
-    // Set for a launch that brought no media of its own: the remembered clip stays on disk
-    // (the picker starts there, its position is kept) but the player must not resume it by
-    // itself. Cleared by updateMedia, i.e. as soon as any media is actually opened.
+    // Set for a launch that brought no media of its own and nothing left to resume: the remembered
+    // clip stays on disk (the picker starts there, its position is kept) but the player must not
+    // open it by itself. Cleared by updateMedia, i.e. as soon as any media is actually opened.
     public boolean suppressResume;
+    // Last in-progress session (clip, timestamp, folder/playlist). Survives a recents swipe; not
+    // the per-URI resume store, so an API launch still does not write watch state the launcher owns.
+    LastSession lastSession;
     public Uri subtitleUri;
     // The second line's file. Remembered next to the first one and cleared with it when the media
     // changes: a hint belongs to the film it was chosen for.
@@ -301,6 +305,7 @@ class Prefs {
         loadSavedPreferences();
         relearnRevokedAudioMimes();
         loadPositions();
+        lastSession = loadLastSession();
     }
 
     /**
@@ -638,6 +643,39 @@ class Prefs {
                 sharedPreferencesEditor.putString(PREF_KEY_MEDIA_TYPE, mediaType);
             sharedPreferencesEditor.apply();
         }
+        // Seed (or drop) the last-session snapshot here so a kill before the first checkpoint cannot
+        // reopen the previous file, and forgetting the clip cannot leave a snapshot behind.
+        if (mediaUri == null) {
+            clearLastSession();
+        } else {
+            final LastSession seed = new LastSession();
+            seed.uri = mediaUri.toString();
+            seed.type = mediaType;
+            seed.positionMs = getPosition();
+            saveLastSession(seed);
+        }
+    }
+
+    /**
+     * The file that is actually playing, without resetting tracks or position. A folder or launcher
+     * playlist advances in memory; this is what makes that advance survive a process death.
+     */
+    public void rememberCurrentMedia(final Uri uri) {
+        if (uri == null) {
+            return;
+        }
+        mediaUri = uri;
+        suppressResume = false;
+        if (persistentMode) {
+            mSharedPreferences.edit().putString(PREF_KEY_MEDIA_URI, uri.toString()).apply();
+        }
+    }
+
+    boolean hasResumableSession() {
+        if (mediaUri != null) {
+            return true;
+        }
+        return lastSession != null && lastSession.uri != null && !lastSession.uri.isEmpty();
     }
 
     /** The second line's file, remembered the same way the first one is. */
@@ -675,6 +713,10 @@ class Prefs {
             positions.remove(positions.keySet().toArray()[0]);
 
         if (persistentMode) {
+            final Object previous = positions.get(mediaUri.toString());
+            if (previous instanceof Long && (Long) previous == position) {
+                return;
+            }
             positions.put(mediaUri.toString(), position);
             savePositions();
         } else {
@@ -806,6 +848,64 @@ class Prefs {
         } catch (Exception e) {
             e.printStackTrace();
             positions = new LinkedHashMap(10);
+        }
+    }
+
+    /**
+     * commit-equivalent: the file is synced before return, so a recents swipe that kills the
+     * process cannot lose the last tick the way SharedPreferences.apply() can.
+     */
+    void saveLastSession(final LastSession session) {
+        if (session == null || session.uri == null) {
+            clearLastSession();
+            return;
+        }
+        final String json = session.toJson();
+        if (json == null) {
+            return;
+        }
+        if (lastSession != null && json.equals(lastSession.toJson())) {
+            return;
+        }
+        try {
+            final FileOutputStream fos = mContext.openFileOutput("last_session", Context.MODE_PRIVATE);
+            fos.write(json.getBytes(StandardCharsets.UTF_8));
+            fos.getFD().sync();
+            fos.close();
+            lastSession = session;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    void clearLastSession() {
+        lastSession = null;
+        mContext.deleteFile("last_session");
+    }
+
+    private LastSession loadLastSession() {
+        FileInputStream fis = null;
+        try {
+            fis = mContext.openFileInput("last_session");
+            final byte[] bytes = new byte[fis.available()];
+            int offset = 0;
+            while (offset < bytes.length) {
+                final int read = fis.read(bytes, offset, bytes.length - offset);
+                if (read < 0) {
+                    break;
+                }
+                offset += read;
+            }
+            return LastSession.fromJson(new String(bytes, 0, offset, StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (fis != null) {
+                try {
+                    fis.close();
+                } catch (Exception ignored) {
+                }
+            }
         }
     }
 

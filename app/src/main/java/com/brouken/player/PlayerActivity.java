@@ -816,6 +816,8 @@ public class PlayerActivity extends Activity {
     boolean apiAccessPartial;
     /** Local folder opened as an ExoPlayer playlist (auto-advance), not a launcher api session. */
     boolean folderPlaylist;
+    /** Play after restoring a last session that was playing at the last disk checkpoint. */
+    private boolean lastSessionPlay;
     String apiTitle;
     Uri apiThumbnailUri;
     String apiSegments;
@@ -1113,6 +1115,19 @@ public class PlayerActivity extends Activity {
         }
     };
 
+    // How often the in-progress session is written to disk while something is loaded. A recents
+    // swipe kills the process; this is what keeps the timestamp within a couple of seconds of the close.
+    private static final long POSITION_CHECKPOINT_MS = 2_000;
+    private final Runnable positionCheckpointRunnable = new Runnable() {
+        @Override
+        public void run() {
+            checkpointPlayback();
+            if (playerView != null && haveMedia) {
+                playerView.postDelayed(this, POSITION_CHECKPOINT_MS);
+            }
+        }
+    };
+
     @RequiresApi(api = Build.VERSION_CODES.O)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -1134,10 +1149,10 @@ public class PlayerActivity extends Activity {
         // Boost is session state kept in statics, so a launch must not inherit it from the last one
         boostLevel = 0;
         boostWarned = false;
-        // Only when something is actually going to play: a launcher start opens on the empty state, and the
-        // orientation preference is about the video, so there is nothing to rotate for there. Doing it here
+        // Only when something is actually going to play: a launcher start with nothing to resume
+        // opens on the empty state, and the orientation preference is about the video. Doing it here
         // rather than leaving it to showEmptyState below avoids launching landscape and flipping back.
-        if (getIntent().getData() != null || Intent.ACTION_SEND.equals(getIntent().getAction())) {
+        if (inheritedIntent != null || hasIncomingMedia(getIntent()) || mPrefs.hasResumableSession()) {
             Utils.setOrientation(this, mPrefs.orientation);
         } else {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
@@ -1204,9 +1219,9 @@ public class PlayerActivity extends Activity {
             // that session on here instead of opening the empty state over a video that is still running.
             setIntent(inheritedIntent);
             handleViewIntent(inheritedIntent);
+        } else if (restoreLastSession()) {
+            // Launcher start: last clip, timestamp and folder/playlist come back from disk.
         } else {
-            // Nothing came in — a launcher start opens on the empty state instead of resuming
-            // whatever was last watched.
             mPrefs.suppressResume = true;
         }
         // After the intent, so a session being restored wins over the launch extras it was started with.
@@ -2703,6 +2718,194 @@ public class PlayerActivity extends Activity {
                 state.getFloat("speed"));
         if (state.containsKey("position")) {
             mPrefs.updatePosition(state.getLong("position"));
+        }
+    }
+
+    private static boolean hasIncomingMedia(final Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+        final String action = intent.getAction();
+        if ("com.brouken.player.action.SHORTCUT_VIDEOS".equals(action)) {
+            return true;
+        }
+        if (intent.getData() != null) {
+            return true;
+        }
+        return Intent.ACTION_SEND.equals(action) && "text/plain".equals(intent.getType());
+    }
+
+    /**
+     * Reopens the last in-progress session after a launcher start (or a recents swipe that killed
+     * the process). Returns true when there is something to put on screen.
+     */
+    private boolean restoreLastSession() {
+        final LastSession session = mPrefs.lastSession;
+        if (session == null || session.uri == null) {
+            return mPrefs.mediaUri != null;
+        }
+        final Uri uri = Uri.parse(session.uri);
+        boolean restoredApi = false;
+        if (session.apiAccess && session.extrasJson != null) {
+            try {
+                final Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(uri, session.type);
+                intent.putExtras(SessionCodec.toBundle(new JSONObject(session.extrasJson)));
+                setIntent(intent);
+                handleViewIntent(intent);
+                restoredApi = apiAccess;
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        if (!restoredApi) {
+            mPrefs.mediaUri = uri;
+            mPrefs.mediaType = session.type;
+            mPrefs.suppressResume = false;
+            if ((session.folderPlaylist || session.apiAccess) && !session.items.isEmpty()) {
+                applyRestoredPlaylist(session);
+                folderPlaylist = session.folderPlaylist;
+                apiAccess = session.apiAccess;
+                if (apiAccess) {
+                    mPrefs.setPersistent(false);
+                }
+                apiTitle = session.title;
+                if (session.thumbnail != null) {
+                    apiThumbnailUri = Uri.parse(session.thumbnail);
+                }
+                apiHeaders = session.headers;
+            }
+        } else {
+            mPrefs.mediaUri = uri;
+            if (session.playlistIndex >= 0 && session.playlistIndex < apiMediaItems.size()) {
+                apiPlaylistStartIndex = session.playlistIndex;
+            }
+            if (session.episodePositions != null && apiPlaylistPositions != null
+                    && session.episodePositions.length == apiPlaylistPositions.length) {
+                apiPlaylistPositions = session.episodePositions;
+            }
+        }
+        if (session.positionMs >= 0) {
+            mPrefs.updatePosition(session.positionMs);
+        }
+        lastSessionPlay = session.playing;
+        // handleViewIntent → updateMedia seeds a stub snapshot; put the full one back.
+        mPrefs.saveLastSession(session);
+        return mPrefs.mediaUri != null;
+    }
+
+    private void applyRestoredPlaylist(final LastSession session) {
+        apiMediaItems.clear();
+        apiPlaylistSegments.clear();
+        apiPlaylistStartIndex = 0;
+        for (int i = 0; i < session.items.size(); i++) {
+            final LastSession.Item row = session.items.get(i);
+            if (row.uri == null) {
+                continue;
+            }
+            final Uri itemUri = Uri.parse(row.uri);
+            final MediaItem.Builder itemBuilder = new MediaItem.Builder().setUri(itemUri);
+            if (row.title != null || row.poster != null) {
+                final MediaMetadata.Builder metadata = new MediaMetadata.Builder();
+                if (row.title != null) {
+                    metadata.setTitle(row.title).setDisplayTitle(row.title);
+                }
+                if (row.poster != null) {
+                    metadata.setArtworkUri(Uri.parse(row.poster));
+                }
+                itemBuilder.setMediaMetadata(metadata.build());
+            }
+            if (Prefs.isSameDocument(mPrefs.mediaUri, itemUri) || itemUri.equals(mPrefs.mediaUri)) {
+                apiPlaylistStartIndex = apiMediaItems.size();
+            }
+            apiMediaItems.add(itemBuilder.build());
+            apiPlaylistSegments.add(null);
+        }
+        if (session.episodePositions != null && session.episodePositions.length == apiMediaItems.size()) {
+            apiPlaylistPositions = session.episodePositions;
+        } else {
+            apiPlaylistPositions = new long[apiMediaItems.size()];
+            Arrays.fill(apiPlaylistPositions, C.TIME_UNSET);
+        }
+        if (session.playlistIndex >= 0 && session.playlistIndex < apiMediaItems.size()) {
+            apiPlaylistStartIndex = session.playlistIndex;
+        }
+    }
+
+    private LastSession captureLastSession(final boolean playing) {
+        final Uri uri = currentPlayingUri();
+        if (uri == null) {
+            return null;
+        }
+        final LastSession session = new LastSession();
+        session.uri = uri.toString();
+        session.type = mPrefs.mediaType;
+        session.positionMs = mPrefs.getPosition();
+        session.playing = playing;
+        session.folderPlaylist = folderPlaylist;
+        session.apiAccess = apiAccess;
+        session.playlistIndex = player != null ? player.getCurrentMediaItemIndex() : apiPlaylistStartIndex;
+        session.title = apiTitle;
+        session.thumbnail = apiThumbnailUri != null ? apiThumbnailUri.toString() : null;
+        session.headers = apiHeaders;
+        session.episodePositions = apiPlaylistPositions;
+        if (!apiMediaItems.isEmpty()) {
+            for (final MediaItem item : apiMediaItems) {
+                final LastSession.Item row = new LastSession.Item();
+                if (item.localConfiguration != null && item.localConfiguration.uri != null) {
+                    row.uri = item.localConfiguration.uri.toString();
+                }
+                if (item.mediaMetadata.title != null) {
+                    row.title = item.mediaMetadata.title.toString();
+                }
+                if (item.mediaMetadata.artworkUri != null) {
+                    row.poster = item.mediaMetadata.artworkUri.toString();
+                }
+                if (row.uri != null) {
+                    session.items.add(row);
+                }
+            }
+        }
+        if (apiAccess) {
+            final Intent intent = getIntent();
+            final Bundle extras = intent != null ? intent.getExtras() : null;
+            if (extras != null) {
+                final Bundle copy = new Bundle(extras);
+                copy.remove(API_RETURN_RESULT);
+                session.extrasJson = SessionCodec.toJson(copy).toString();
+            }
+        }
+        return session;
+    }
+
+    private void checkpointPlayback() {
+        if (player == null || !haveMedia) {
+            return;
+        }
+        if (player.isCurrentMediaItemSeekable()) {
+            final long position = player.getPlaybackState() == Player.STATE_ENDED
+                    ? 0 : player.getCurrentPosition();
+            mPrefs.updatePosition(position);
+            rememberEpisodePosition(player.getCurrentMediaItemIndex(), position);
+        }
+        final LastSession session = captureLastSession(
+                player.getPlayWhenReady() && player.getPlaybackState() != Player.STATE_ENDED);
+        if (session != null) {
+            mPrefs.saveLastSession(session);
+        }
+    }
+
+    private void startPositionCheckpoint() {
+        if (playerView == null) {
+            return;
+        }
+        playerView.removeCallbacks(positionCheckpointRunnable);
+        playerView.postDelayed(positionCheckpointRunnable, POSITION_CHECKPOINT_MS);
+    }
+
+    private void stopPositionCheckpoint() {
+        if (playerView != null) {
+            playerView.removeCallbacks(positionCheckpointRunnable);
         }
     }
 
@@ -10454,9 +10657,13 @@ public class PlayerActivity extends Activity {
 
             updateLoading(true);
 
-            if ((mPrefs.getPosition() == 0L || apiAccess || apiAccessPartial) && !keepPaused) {
+            if ((lastSessionPlay || mPrefs.getPosition() == 0L || apiAccess || apiAccessPartial)
+                    && !keepPaused) {
                 play = true;
             }
+            lastSessionPlay = false;
+            startPositionCheckpoint();
+            checkpointPlayback();
 
             updateTopInfo();
 
@@ -10483,6 +10690,7 @@ public class PlayerActivity extends Activity {
             player.setHandleAudioBecomingNoisy(!isTvBox);
 //            mediaSession.setActive(true);
         } else {
+            stopPositionCheckpoint();
             playerView.showController();
             emptyState.show();
         }
@@ -10632,6 +10840,11 @@ public class PlayerActivity extends Activity {
                             ? 0 : player.getCurrentPosition();
                     mPrefs.updatePosition(position);
                     rememberEpisodePosition(player.getCurrentMediaItemIndex(), position);
+                }
+                final LastSession session = captureLastSession(
+                        player.getPlayWhenReady() && player.getPlaybackState() != Player.STATE_ENDED);
+                if (session != null) {
+                    mPrefs.saveLastSession(session);
                 }
                 mPrefs.updateMeta(getSelectedTrack(C.TRACK_TYPE_AUDIO),
                         // A painted subtitle is on screen with no track selected, so getSelectedTrack
@@ -10804,6 +11017,7 @@ public class PlayerActivity extends Activity {
     }
 
     public void releasePlayer(boolean save) {
+        stopPositionCheckpoint();
         cancelLoadWatchdog();
         // A pending source re-read belongs to the session being torn down here, same as errorToShow below.
         // So do both watchdogs that guard a retained session (see onStop / onStart): whatever path got
@@ -11018,6 +11232,9 @@ public class PlayerActivity extends Activity {
                     player.seekTo(newIndex, saved);
                 }
             }
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                checkpointPlayback();
+            }
         }
 
         @Override
@@ -11032,7 +11249,7 @@ public class PlayerActivity extends Activity {
                     apiPlaylistStartIndex = idx;
                     final MediaItem current = apiMediaItems.get(idx);
                     if (current.localConfiguration != null) {
-                        mPrefs.mediaUri = current.localConfiguration.uri;
+                        mPrefs.rememberCurrentMedia(current.localConfiguration.uri);
                     }
                 }
             }
@@ -11041,6 +11258,7 @@ public class PlayerActivity extends Activity {
             // with what is playing now. PLAYLIST_CHANGED is excluded because that is the transition
             // attachSubtitleTrack() itself causes, and clearing there would undo the attach that raised it.
             if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
+                checkpointPlayback();
                 mPrefs.updateSubtitle(null);
                 // Painting is not tied to a track, so nothing else would stop the previous episode's
                 // subtitles from being drawn over this one.
@@ -11226,6 +11444,7 @@ public class PlayerActivity extends Activity {
             // first should start the clock on letting the source go.
             playerView.removeCallbacks(pauseReleaseRunnable);
             if (!isPlaying && player != null && !player.getPlayWhenReady()) {
+                checkpointPlayback();
                 playerView.postDelayed(pauseReleaseRunnable, PAUSE_RELEASE_MS);
             }
 
@@ -13303,7 +13522,6 @@ public class PlayerActivity extends Activity {
      * between them (same alphabetical order as the manual "next file" button).
      */
     private void buildFolderPlaylistIfPossible() {
-        folderPlaylist = false;
         if (apiAccess || apiAccessPartial || mPrefs.mediaUri == null) {
             return;
         }
@@ -13312,6 +13530,7 @@ public class PlayerActivity extends Activity {
         }
         final List<Uri> uris = listFolderVideoUris();
         if (uris.size() <= 1) {
+            // A restored folder queue stays when the directory cannot be listed again (no scope).
             return;
         }
         apiMediaItems.clear();
@@ -13721,6 +13940,8 @@ public class PlayerActivity extends Activity {
     // Nothing left to play: drop the end controls and hand the screen over to the empty state.
     private void showEmptyStateWithoutMedia() {
         haveMedia = false;
+        stopPositionCheckpoint();
+        mPrefs.clearLastSession();
         setEndControlsVisible(false);
         playerView.setControllerShowTimeoutMs(-1);
         emptyState.show();
