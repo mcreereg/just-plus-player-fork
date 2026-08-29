@@ -143,11 +143,11 @@ Two flavour dimensions: `targetSdk` (`latest` = targetSdk 36, `legacy` = targetS
 
 ### Launching the player from another app
 
-An `ACTION_VIEW` intent addressed to `com.justplus.player`, with the video as the data URI:
+An `ACTION_VIEW` intent addressed to `com.justplus.player.plus`, with the video as the data URI:
 
 ```java
 Intent intent = new Intent(Intent.ACTION_VIEW);
-intent.setPackage("com.justplus.player");                 // or the explicit component
+intent.setPackage("com.justplus.player.plus");            // or the explicit component
 intent.setDataAndType(Uri.parse(url), "video/*");         // content:// also needs FLAG_GRANT_READ_URI_PERMISSION
 intent.putExtra("title", "Machines");
 startActivityForResult(intent, REQUEST_PLAY);             // startActivity if you do not want a result
@@ -291,7 +291,7 @@ Pause and resume once.
 
 ### Why does it ask for "Modify system settings"?
 
-The system file chooser always uses the current system orientation, even when the player sets its own. Granting `WRITE_SETTINGS` from the App info screen or via adb (`adb shell pm grant com.justplus.player android.permission.WRITE_SETTINGS`) lets the app temporarily enable Auto-rotate to partially work around [this imperfection](https://issuetracker.google.com/issues/141968218). Nothing else uses the permission, and the app works without it.
+The system file chooser always uses the current system orientation, even when the player sets its own. Granting `WRITE_SETTINGS` from the App info screen or via adb (`adb shell pm grant com.justplus.player.plus android.permission.WRITE_SETTINGS`) lets the app temporarily enable Auto-rotate to partially work around [this imperfection](https://issuetracker.google.com/issues/141968218). Nothing else uses the permission, and the app works without it.
 
 ### The orientation button does nothing
 
