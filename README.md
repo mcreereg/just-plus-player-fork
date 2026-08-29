@@ -43,6 +43,7 @@ It is a fork of [Just (Video) Player](https://github.com/moneytoo/Player) by Mar
  * A list of preferred audio languages instead of a single one — the player takes the first language a file actually carries, so a release without yours falls back to the next language you named rather than to whatever the file happens to list first
  * A language can be promoted straight from the audio panel, without a trip to Settings
  * Sturdier audio: passthrough (AC3/DTS/TrueHD) is rebuilt after a seek or a resume, a format the device mishandles is learned and avoided, and playback survives the audio output disappearing
+ * Remembers the last video, its timestamp and whether it was in a folder or playlist, so a swipe-away from recents comes back within a couple of seconds of where it left off
 
 **Watch together**
 
