@@ -55,6 +55,7 @@ class Prefs {
     private static final String PREF_KEY_ASK_SCOPE = "askScope";
     private static final String PREF_KEY_RESTORE_AUTO_ROTATE = "restoreAutoRotate";
     private static final String PREF_KEY_AUTO_PIP = "autoPiP";
+    private static final String PREF_KEY_BACKGROUND_PLAYBACK = "backgroundPlayback";
     private static final String PREF_KEY_DISABLE_VOLUME_BRIGHTNESS_GESTURES = "disableVolumeBrightnessGestures";
     private static final String PREF_KEY_HOLD_SPEED = "holdSpeed";
     private static final String PREF_KEY_TUNNELING = "tunneling";
@@ -190,6 +191,9 @@ class Prefs {
     // with the picker still open cannot leave the whole phone rotating — see PlayerActivity.enableRotation.
     public boolean restoreAutoRotate = false;
     public boolean autoPiP = false;
+    // Audio continues when the player screen is stopped (Home, app switch, power button). Off
+    // keeps the historical pause-on-leave behaviour.
+    public boolean backgroundPlayback = false;
     // Off means the vertical swipes work as they always have; on takes them away entirely.
     public boolean disableVolumeBrightnessGestures = false;
     // Off takes the whole hold gesture away: a long press on the picture then does nothing at all.
@@ -371,6 +375,7 @@ class Prefs {
 
     public void loadUserPreferences() {
         autoPiP = mSharedPreferences.getBoolean(PREF_KEY_AUTO_PIP, autoPiP);
+        backgroundPlayback = mSharedPreferences.getBoolean(PREF_KEY_BACKGROUND_PLAYBACK, backgroundPlayback);
         disableVolumeBrightnessGestures = mSharedPreferences.getBoolean(
                 PREF_KEY_DISABLE_VOLUME_BRIGHTNESS_GESTURES, disableVolumeBrightnessGestures);
         holdSpeed = mSharedPreferences.getBoolean(PREF_KEY_HOLD_SPEED, holdSpeed);
@@ -915,6 +920,9 @@ class Prefs {
         all.remove(PREF_KEY_TOGETHER_PASSWORD);
         all.remove(PREF_KEY_TOGETHER_PUBLIC);
         all.remove(PREF_KEY_TOGETHER_RELAY);
+        // Lifecycle policy, not a player-build option: toggling it must not rebuild (and pause) the
+        // session the user is about to background.
+        all.remove(PREF_KEY_BACKGROUND_PLAYBACK);
         return all;
     }
 }
