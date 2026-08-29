@@ -40,6 +40,13 @@
 
     <PreferenceCategory app:title="@string/pref_audio_header">
 
+        <SwitchPreferenceCompat
+            app:key="backgroundPlayback"
+            app:defaultValue="false"
+            app:summaryOn="@string/pref_background_playback_on"
+            app:summaryOff="@string/pref_background_playback_off"
+            app:title="@string/pref_background_playback" />
+
         <!-- Ordered list of languages, edited in LanguagePriorityDialog; the summary lists them.
              No defaultValue: Prefs seeds the key from the device languages on first run. -->
         <Preference

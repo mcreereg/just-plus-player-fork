@@ -146,7 +146,6 @@ import androidx.media3.extractor.text.DefaultSubtitleParserFactory;
 import androidx.media3.extractor.text.SubtitleParser;
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory;
 import androidx.media3.extractor.ts.TsExtractor;
-import androidx.media3.session.MediaSession;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.CaptionStyleCompat;
 import androidx.media3.ui.DefaultTimeBar;
@@ -206,7 +205,6 @@ public class PlayerActivity extends Activity {
     private PlayerListener playerListener;
     private BroadcastReceiver mReceiver;
     private AudioManager mAudioManager;
-    private MediaSession mediaSession;
     private DefaultTrackSelector trackSelector;
     public static LoudnessEnhancer loudnessEnhancer;
     // Boost fallback for devices where the effect above is a no-op, see BoostAudioProcessor
@@ -696,6 +694,9 @@ public class PlayerActivity extends Activity {
     private boolean restoreOrientationLock;
     private boolean restorePlayState;
     private boolean restorePlayStateAllowed;
+    // Video renderer is released while the screen is away so Media3 does not time out waiting for
+    // a SurfaceView that is not coming back (see onStop). Restored in onStart.
+    private boolean videoDisabledForBackground;
     // "Start playing once the player is ready". Read live by Utils.playIfCan, whose frame-rate probe runs on
     // a background thread: a snapshot taken before it started would still play after onStop cleared this.
     boolean play;
@@ -2419,6 +2420,10 @@ public class PlayerActivity extends Activity {
             Utils.toggleSystemUi(this, playerView, true);
         }
         playerView.removeCallbacks(backgroundReleaseRunnable);
+        // A session that kept playing in the background still has its video renderer off (see
+        // setVideoDisabledForBackground). Put the picture back before the resume watchdog starts
+        // counting frames, or it would rebuild a healthy audio-only session as "no frame".
+        setVideoDisabledForBackground(false);
         // Coming back never resumes playback — that is the user's call. Clear the latch before anything
         // below can read it: whatever the trip to the background interrupted (a scrub drag) may have left
         // it armed, and a rebuild here or in onActivityResult would consume it as "play". Show the
@@ -2442,7 +2447,11 @@ public class PlayerActivity extends Activity {
             initializePlayer();
         } else {
             resumeFrameRendered = false;
-            playerView.postDelayed(resumeWatchdogRunnable, RESUME_WATCHDOG_MS);
+            // A session that kept playing in the background already has audio; the watchdog would
+            // rebuild it as "no frame" while the video renderer is still coming back.
+            if (!player.isPlaying()) {
+                playerView.postDelayed(resumeWatchdogRunnable, RESUME_WATCHDOG_MS);
+            }
             // Put back what onStop cancelled, and only that: a load that was still buffering when the user
             // left gets a full timeout from the moment they are looking at it again.
             if (player.getPlaybackState() == Player.STATE_BUFFERING) {
@@ -2491,24 +2500,42 @@ public class PlayerActivity extends Activity {
             playerView.removeCallbacks(barsHider);
         }
         playerView.setCustomErrorMessage(null);
-        // Stop sampling before the pause below: that pause is the trip to the background, not the
-        // viewer reaching for the button, and the room must not be told to stop with us.
-        if (together != null) {
-            together.suspend();
-        }
         // The player is a newer screen's now (see handOver), so nothing below may touch it: this screen
         // has already saved and released what was its own.
         if (handedOver) {
+            if (together != null) {
+                together.suspend();
+            }
             return;
         }
         // With no session worth keeping (leaving for good, or nothing loaded) tear down as before —
         // the empty state and its pulse are only ever (re)built by initializePlayer.
         if (isFinishing() || player == null || !haveMedia) {
+            if (together != null) {
+                together.suspend();
+            }
             if (isFinishing() && together != null) {
                 together.leave();
             }
             releasePlayer(false);
             return;
+        }
+        if (shouldKeepPlayingInBackground()) {
+            // Still playing, so the room must keep sampling: suspending here would look like a pause
+            // the viewer never made. Video is dropped so the destroyed SurfaceView cannot take the
+            // session with it (Media3's 2 s detach timeout). PiP keeps the picture, so it is skipped.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !isInPip()) {
+                setVideoDisabledForBackground(true);
+            }
+            cancelLoadWatchdog();
+            playerView.removeCallbacks(resumeWatchdogRunnable);
+            Utils.log("background: keeping playback");
+            return;
+        }
+        // Stop sampling before the pause below: that pause is the trip to the background, not the
+        // viewer reaching for the button, and the room must not be told to stop with us.
+        if (together != null) {
+            together.suspend();
         }
         // Otherwise keep the player and only stop the sound: a rebuild would re-buffer the stream and
         // drop everything that lives on the instance (quality override, selected tracks, lock).
@@ -10318,23 +10345,16 @@ public class PlayerActivity extends Activity {
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                 .build();
         player.setAudioAttributes(audioAttributes, true);
+        // Keep the CPU (and Wi-Fi, for streams) while the screen is off. Without this, a background
+        // session dies the moment the device sleeps even though the foreground service is running.
+        player.setWakeMode(C.WAKE_MODE_NETWORK);
         applyVolumeMode();
         applySleepAtEndOfItem();
 
         youTubeOverlay.player(player);
         playerView.setPlayer(player);
 
-        if (mediaSession != null) {
-            mediaSession.release();
-        }
-
-        if (player.canAdvertiseSession()) {
-            try {
-                mediaSession = new MediaSession.Builder(this, player).build();
-            } catch (IllegalStateException e) {
-                e.printStackTrace();
-            }
-        }
+        PlaybackService.attach(this, player);
 
         playerView.setControllerShowTimeoutMs(-1);
 
@@ -10816,10 +10836,8 @@ public class PlayerActivity extends Activity {
         if (player != null) {
             notifyAudioSessionUpdate(false);
 
-//            mediaSession.setActive(false);
-            if (mediaSession != null) {
-                mediaSession.release();
-            }
+            PlaybackService.detach(player);
+            videoDisabledForBackground = false;
 
             if (player.isPlaying() && restorePlayStateAllowed) {
                 restorePlayState = true;
@@ -12744,6 +12762,45 @@ public class PlayerActivity extends Activity {
         if (!Utils.isPiPSupported(this))
             return false;
         return isInPictureInPictureMode();
+    }
+
+    /**
+     * Home, an app switch, or the power button all stop this screen. When the viewer asked to keep
+     * hearing the film — or when it is already in PiP, which is the same request with a picture —
+     * {@link #onStop} must not pause. Buffering with {@code playWhenReady} counts: that is a session
+     * that is about to make sound, and pausing it would cancel the auto-play {@code STATE_READY}
+     * would otherwise fire.
+     */
+    private boolean shouldKeepPlayingInBackground() {
+        if (player == null || !haveMedia) {
+            return false;
+        }
+        if (!player.getPlayWhenReady()) {
+            return false;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPip()) {
+            return true;
+        }
+        return mPrefs != null && mPrefs.backgroundPlayback;
+    }
+
+    /**
+     * Drop or restore the video renderer around a trip to the background. A SurfaceView dies with
+     * {@code onStop}; Media3 then waits two seconds for a replacement and fails the player with
+     * {@link androidx.media3.exoplayer.ExoTimeoutException} if none arrives. Audio does not need the
+     * surface. Disabling the video track type is also what keeps the decoder from burning battery
+     * against a black screen.
+     */
+    private void setVideoDisabledForBackground(boolean disabled) {
+        if (player == null || videoDisabledForBackground == disabled) {
+            return;
+        }
+        videoDisabledForBackground = disabled;
+        player.setTrackSelectionParameters(
+                player.getTrackSelectionParameters()
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, disabled)
+                        .build());
     }
 
     @RequiresApi(api = Build.VERSION_CODES.N)

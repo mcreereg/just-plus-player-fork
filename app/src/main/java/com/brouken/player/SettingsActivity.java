@@ -164,6 +164,22 @@ public class SettingsActivity extends AppCompatActivity
             if (preferenceAutoPiP != null) {
                 preferenceAutoPiP.setEnabled(Utils.isPiPSupported(this.getContext()));
             }
+            SwitchPreferenceCompat preferenceBackground = findPreference("backgroundPlayback");
+            if (preferenceBackground != null) {
+                preferenceBackground.setOnPreferenceChangeListener((preference, newValue) -> {
+                    if (Boolean.TRUE.equals(newValue) && Build.VERSION.SDK_INT >= 33) {
+                        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                requireContext(),
+                                android.Manifest.permission.POST_NOTIFICATIONS)
+                                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                            requestPermissions(
+                                    new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                                    0);
+                        }
+                    }
+                    return true;
+                });
+            }
             Preference preferenceFrameRateMatching = findPreference("frameRateMatching");
             if (preferenceFrameRateMatching != null) {
                 preferenceFrameRateMatching.setEnabled(Build.VERSION.SDK_INT >= 23);
