@@ -260,7 +260,7 @@ class Prefs {
     public int subtitleSecondaryTextColor = 0xFFCCCCCC;
     public int subtitleSecondaryBackgroundColor = 0x80000000;
     public float subtitleSecondaryScale = 1.0f;
-    public boolean skipEnabled = true;
+    public boolean skipEnabled = false;
     public String skipMode = SKIP_MODE_BRIEF;
     public String skipModeCredits = SKIP_MODE_BRIEF;
     public boolean skipHideWhenLocked = false;
@@ -283,7 +283,7 @@ class Prefs {
     /** Page an invite link points at. Empty means the built-in default, which is the web player's own. */
     public String togetherInvitePage = "";
     public boolean crashReporting = false;
-    public boolean autoUpdate = true;
+    public boolean autoUpdate = false;
     public long updateLastCheck = 0L;
     public int updateSkippedVersionCode = 0;
     // Last update the check found, remembered across launches so the button beside the gear is there from

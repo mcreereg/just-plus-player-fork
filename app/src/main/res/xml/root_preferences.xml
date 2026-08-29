@@ -337,7 +337,7 @@
 
             <SwitchPreferenceCompat
                 app:key="skipEnabled"
-                app:defaultValue="true"
+                app:defaultValue="false"
                 app:summaryOn="@string/pref_skip_enabled_on"
                 app:summaryOff="@string/pref_skip_enabled_off"
                 app:title="@string/pref_skip_enabled" />
@@ -479,7 +479,7 @@
 
         <SwitchPreferenceCompat
             app:key="autoUpdate"
-            app:defaultValue="true"
+            app:defaultValue="false"
             app:summaryOn="@string/pref_auto_update_on"
             app:summaryOff="@string/pref_auto_update_off"
             app:title="@string/pref_auto_update" />

@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,14 +24,10 @@ jobs:
           java-version: 21
           cache: gradle
 
-      - run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > ${GITHUB_WORKSPACE}/keystore.jks
-
+      # Signing comes from app/keystore/release.jks in the tree (see app/build.gradle).
+      # Injected secrets were a second key and made sideload updates fail.
       - run: ./gradlew assembleLatestUniversalRelease
           -PSENTRY_DSN=${{ secrets.SENTRY_DSN }}
-          -Pandroid.injected.signing.store.file=${GITHUB_WORKSPACE}/keystore.jks
-          -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }}
-          -Pandroid.injected.signing.key.alias=key
-          -Pandroid.injected.signing.key.password=${{ secrets.KEYSTORE_PASSWORD }}
 
       - uses: softprops/action-gh-release@v2
         with:
