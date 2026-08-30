@@ -582,7 +582,6 @@ public class PlayerActivity extends Activity {
     private ImageButton buttonQuality;
     private ImageButton buttonAudio;
     private ImageButton buttonMore;
-    private ImageButton buttonHome;
     private ImageButton buttonUpdate;
     private ImageButton buttonSkipOffset;
     private android.app.Dialog qualityDialog;
@@ -1395,15 +1394,6 @@ public class PlayerActivity extends Activity {
             return true;
         });
 
-        // Way back to the empty page without having to open a different file first, or wait for this
-        // one to end. Hidden while that page is already in front.
-        buttonHome = new ImageButton(this, null, 0, R.style.ExoStyledControls_Button_Bottom);
-        buttonHome.setImageResource(R.drawable.ic_home_24dp);
-        buttonHome.setId(View.generateViewId());
-        buttonHome.setContentDescription(getString(R.string.button_main_menu));
-        buttonHome.setVisibility(View.GONE);
-        buttonHome.setOnClickListener(view -> returnToMainMenu());
-
         // The only ambient sign that a release is waiting. It exists solely while one is (see
         // refreshUpdateButton) and lives in the controls, which are on screen only when the user asked for
         // them — so nothing is ever interrupted, and the brand colour is what makes it findable anyway.
@@ -2183,9 +2173,6 @@ public class PlayerActivity extends Activity {
         // "Update available" sits immediately before the gear — one insertion point that lands in the same
         // place on a phone and on TV, because the gear ends the bottom bar on both.
         controls.addView(buttonUpdate);
-        // Home sits with the gear: both are ways of leaving this film, and the gear already ends the
-        // bottom bar on phone and TV. Hidden while the empty page is in front (see updateHomeButton).
-        controls.addView(buttonHome);
         // "More" (overflow) always lives at the end of the bottom bar.
         controls.addView(buttonMore);
 
@@ -2200,7 +2187,6 @@ public class PlayerActivity extends Activity {
         }
         styleClusterButton(buttonUpdate);
         refreshUpdateButton();
-        styleClusterButton(buttonHome);
         styleClusterButton(buttonMore);
         styleClusterButton(buttonAspectRatio);
         if (buttonPiP != null) {
@@ -10596,7 +10582,6 @@ public class PlayerActivity extends Activity {
 
         if (haveMedia) {
             emptyState.hide();
-            updateHomeButton();
             if (isNetworkUri) {
                 // Reads as a light rail ahead of the playhead, the way the design shows a buffering stream.
                 timeBar.setBufferedColor(0xC0FFFFFF);
@@ -10713,7 +10698,6 @@ public class PlayerActivity extends Activity {
             stopPositionCheckpoint();
             playerView.showController();
             emptyState.show();
-            updateHomeButton();
         }
 
         player.addListener(playerListener);
@@ -13167,9 +13151,6 @@ public class PlayerActivity extends Activity {
         playerView.setCustomErrorMessage(text);
         playerView.setControllerShowTimeoutMs(-1);
         playerView.showController();
-        // Still a player page, not the empty one — Home is the way off a failed clip without opening
-        // the gear first.
-        updateHomeButton();
     }
 
     void showError(ExoPlaybackException error) {
@@ -14045,7 +14026,6 @@ public class PlayerActivity extends Activity {
         setEndControlsVisible(false);
         playerView.setControllerShowTimeoutMs(-1);
         emptyState.show();
-        updateHomeButton();
     }
 
     /**
@@ -14068,13 +14048,6 @@ public class PlayerActivity extends Activity {
         skipMediaAfterFatalError = false;
         haveMedia = false;
         initializePlayer();
-    }
-
-    /** Home is only a way <em>to</em> the empty page, so it has no business sitting on it. */
-    private void updateHomeButton() {
-        if (buttonHome != null) {
-            buttonHome.setVisibility(emptyState.isVisible() ? View.GONE : View.VISIBLE);
-        }
     }
 
     void deleteMedia() {
@@ -14154,11 +14127,7 @@ public class PlayerActivity extends Activity {
         Utils.setButtonEnabled(this, buttonAspectRatio, enable);
         // The gear stays reachable with no player: its menu drops the player-dependent rows by itself
         // (see showMoreMenu) and keeps "Open" and the settings screen — the way out of a failed clip.
-        // Home is the other way out of a failed clip, so it stays live for the same reason.
         Utils.setButtonEnabled(this, exoSettings, true);
-        if (buttonHome != null) {
-            Utils.setButtonEnabled(this, buttonHome, true);
-        }
     }
 
     private void scaleStart() {
