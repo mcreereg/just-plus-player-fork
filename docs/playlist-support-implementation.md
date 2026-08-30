@@ -23,10 +23,10 @@ app/src/main/java/com/brouken/player/playlist/
 ### Tasks
 
 1. **`M3uEntry`** — fields: `String uri`, `String title`, `int durationSec` (default -1).
-2. **`M3uPlaylist`** — `String title`, `List<M3uEntry> entries`, `Uri sourceUri` optional.
+2. **`M3uPlaylist`** — `List<M3uEntry> entries`, `Uri sourceUri` optional; display name via `Utils.getFileName(sourceUri)` minus `.m3u` (not a persisted field in the M3U file).
 3. **`M3uReader`**
    - `read(InputStream, Uri baseUri)` → `M3uPlaylist`
-   - Handle `#EXTM3U`, `#EXTINF`, `#PLAYLIST:`, comments, blank lines
+   - Handle `#EXTM3U`, `#EXTINF`, comments, blank lines; **ignore `#PLAYLIST:`** if present
    - Simple M3U (URI-only lines) fallback
 4. **`M3uWriter`**
    - `write(M3uPlaylist, OutputStream)` UTF-8
@@ -62,7 +62,7 @@ app/src/main/java/com/brouken/player/playlist/
    - `getIndex(Uri)`, `setIndex(Uri, int)`, `getLastPlaylist()`, `setLastPlaylist(Uri, int)`
    - Hook clamp when queue shrinks
 2. **`PlaylistIndex`**
-   - `register(Uri, title, source)`
+   - `register(Uri, title, source)` — `title` = filename sans `.m3u`
    - `unregister(Uri)`
    - `loadAll(Context)` → merge: app-private dir scan + prefs registry + scoped scan
    - `scanAppPrivate(Context)`, `scanScoped(Context, Uri scopeUri)`
@@ -91,15 +91,18 @@ app/src/main/java/com/brouken/player/playlist/PlaylistAccessResolver.java
 
 ### Tasks
 
-1. `canRead(Context, Uri)` for content/file schemes.
-2. `groupByParent(List<M3uEntry>)` → `Map<Uri, List<M3uEntry>>` (parent document URI).
-3. `ensureAccess(PlayerActivity, M3uPlaylist, Callback)` async-friendly:
+1. `canRead(Context, Uri)` for **local** content/file schemes only.
+2. `isNetworkUri(Uri)` — delegate to `Utils.isSupportedNetworkUri`; network entries bypass `canRead`.
+3. `groupByParent(List<M3uEntry>)` → `Map<Uri, List<M3uEntry>>` (parent document URI; local only).
+4. `ensureAccess(PlayerActivity, M3uPlaylist, Callback)` async-friendly:
    - Returns `AccessResult { List<M3uEntry> accessible, List<M3uEntry> skipped }`
+   - Accessible = all network entries + local entries that pass `canRead` (after prompts)
+   - Skipped = local entries still unreadable after prompts
    - Drives `startActivityForResult` chains via activity delegate methods
-4. Add request codes on `PlayerActivity`:
+5. Add request codes on `PlayerActivity`:
    - `REQUEST_PLAYLIST_ACCESS_TREE = 30`
    - `REQUEST_PLAYLIST_ACCESS_FILES = 31`
-5. **Tests** — unit test grouping only (`PlaylistAccessResolverTest.java`).
+6. **Tests** — unit test grouping only (`PlaylistAccessResolverTest.java`); verify network entries never probed.
 
 ### Acceptance
 
@@ -113,9 +116,9 @@ app/src/main/java/com/brouken/player/playlist/PlaylistAccessResolver.java
 
 ### `PlayerActivity.java` changes
 
-1. Fields: `filePlaylist`, `filePlaylistUri`, `filePlaylistTitle`.
+1. Fields: `filePlaylist`, `filePlaylistUri`, `filePlaylistTitle` (from filename).
 2. `isPlaylistFile(Uri, String mime)` — extension + MIME + optional sniff.
-3. `openPlaylistFile(Uri)` — parse → access → build queue → play.
+3. `openPlaylistFile(Uri)` — parse → access (local probe only) → build queue → play; warn if >100 items.
 4. `buildFilePlaylistQueue(List<M3uEntry>)` — populate `apiMediaItems`, `apiPlaylistPositions` from `Prefs` per URI, set index from `PlaylistPlaybackState`.
 5. `resetApiAccess()` — clear file playlist fields.
 6. `openFile()` — add M3U MIME types to SAF intent.
@@ -151,7 +154,7 @@ app/src/main/java/com/brouken/player/playlist/PlaylistAccessResolver.java
 
 ### Changes
 
-1. **`showPlaylistDialog()`** — if `filePlaylist`, subtitle/header shows `filePlaylistTitle`.
+1. **`showPlaylistDialog()`** — if `filePlaylist`, header shows playlist filename (sans `.m3u`).
 2. **Save as playlist** — menu item in playlist panel header or More menu:
    - `saveQueueAsPlaylist()` → build `M3uPlaylist` from `apiMediaItems` → launch editor or quick-save dialog.
 3. **`LastSessionTest.java`** — extend for new fields.
@@ -162,7 +165,7 @@ app/src/main/java/com/brouken/player/playlist/PlaylistAccessResolver.java
 
 ### Acceptance
 
-- Panel shows "Playlist — My Show".
+- Panel shows "Playlist — my_show" (from `my_show.m3u`).
 - Save from folder queue creates `.m3u` in app-private dir.
 
 ---
@@ -203,7 +206,7 @@ app/src/main/res/menu/menu_playlist_editor.xml
 3. **New** — name dialog → empty file → edit screen.
 4. **Edit screen** — `ItemTouchHelper` drag, delete row, add from folder.
 5. **Add from folder** — `ACTION_OPEN_DOCUMENT_TREE` → list videos → append.
-6. **Rename** — filename + title dialog; `DocumentsContract.renameDocument` or rewrite.
+6. **Rename** — filename dialog only; `DocumentsContract.renameDocument` or rewrite.
 7. **Copy** — `ACTION_CREATE_DOCUMENT` save-as.
 8. **Delete** — confirm, delete file, unregister.
 9. **Play** — `startActivity` to `PlayerActivity` with playlist URI extra `com.brouken.player.PLAYLIST_URI` (new constant) or `ACTION_VIEW` on file URI.
@@ -224,7 +227,7 @@ app/src/main/res/menu/menu_playlist_editor.xml
 ## Phase 7 — Polish and README
 
 1. **README.md** — short section on M3U playlists and editor.
-2. **500 item warning** — dialog in `openPlaylistFile` and editor append.
+2. **100 item warning** — dialog in `openPlaylistFile` and editor append.
 3. **Error handling** — corrupt M3U → snackbar + stay on menu.
 4. Manual QA matrix:
 

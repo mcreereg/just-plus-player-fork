@@ -1,6 +1,6 @@
 # Playlist support — design specification
 
-Status: **approved decisions** (2026-08-30). Implementation blocked until user says **GO**.
+Status: **approved decisions** (2026-08-30, revised). Implementation blocked until user says **GO**.
 
 ## Summary
 
@@ -10,7 +10,7 @@ Add first-class **M3U playlist file** support to Just+ Player:
 - Play as an ExoPlayer queue with per-item resume, access prompts batched by parent folder.
 - Persist last index per playlist file; per-item timestamps via existing per-URI position store.
 - New main-menu **Playlist editor** activity (phone/tablet v1) for create/delete/edit/rename/copy/reorder/bulk-add.
-- Reuse in-player playlist side panel; show playlist display name.
+- Reuse in-player playlist side panel; show playlist name (from **filename**, not embedded metadata).
 - **Save as playlist** from active queue.
 
 Out of scope v1: Watch Together over file playlists, TV editor UI, external file change detection while playing.
@@ -42,17 +42,19 @@ Out of scope v1: Watch Together over file playlists, TV editor UI, external file
 | 5.2 | Editor list | Show all playlists; badge when some items lack access |
 | 5.3 | Create | Empty playlist after name prompt |
 | 5.4 | Delete | Delete playlist file only (with confirm) |
-| 5.5 | Rename | Filename **and** optional display title (`#EXTINF` / `#PLAYLIST:` comment) |
+| 5.5 | Rename | **Filename only** — playlist name is always the `.m3u` filename (no separate display title) |
 | 5.6 | Copy | Save-as to user-picked location |
 | 5.7 | Reorder | Drag handles (touch); D-pad move on focusable rows |
 | 5.8 | Bulk add | Pick folder → add all videos in folder (alphabetical, same order as folder playlist) |
 | 5.9 | Item edit | Remove + reorder only (no inline title/URI edit) |
 | 5.10 | Main menu | New pill between **Open link** and **Join room** |
 | 5.11 | TV | Editor phone/tablet only v1; TV can still **open/play** playlists |
-| 6.1 | Player panel | Reuse `showPlaylistDialog()`; header shows playlist display name |
+| 6.1 | Player panel | Reuse `showPlaylistDialog()`; header shows playlist filename (sans `.m3u`) |
 | 6.2 | Save queue | **Save as playlist** from player when queue has >1 item |
 | 7.1 | External edits | Ignore until playlist re-opened |
-| 7.2 | Size limit | Soft warning at **500** items (allow continue) |
+| 7.2 | Size limit | Soft warning at **100** items (allow continue) |
+| 7.4 | Playlist naming | **No `#PLAYLIST:` tag** — name comes from file only; ignore if present in foreign playlists |
+| 7.5 | Access probe | **Local files only** (`content://`, `file://`); network URLs skip upfront probe |
 | 7.3 | Watch Together | Out of scope v1 |
 
 ---
@@ -103,7 +105,7 @@ flowchart TD
 
 | Class | Responsibility |
 |-------|----------------|
-| `M3uPlaylist` | In-memory model: display title, ordered `M3uEntry` list |
+| `M3uPlaylist` | In-memory model: ordered `M3uEntry` list; display name derived from `sourceUri` filename at runtime |
 | `M3uEntry` | `uri`, `title`, `durationSec` (-1 if unknown) |
 | `M3uReader` | Parse extended M3U from `InputStream` / URI |
 | `M3uWriter` | Serialize extended M3U to app-private or SAF output stream |
@@ -118,7 +120,7 @@ flowchart TD
 ```java
 boolean filePlaylist;           // true when queue sourced from .m3u file
 Uri filePlaylistUri;            // the .m3u document URI (or file:// in legacy mode)
-String filePlaylistTitle;       // display name for panel header
+String filePlaylistTitle;       // filename sans .m3u — not stored inside the M3U file
 ```
 
 Distinct from existing `folderPlaylist` and `apiAccess`. Only one queue source active:
@@ -139,8 +141,8 @@ Distinct from existing `folderPlaylist` and `apiAccess`. Only one queue source a
 
 - Require or accept `#EXTM3U` header (treat missing header as simple M3U for compatibility).
 - Parse `#EXTINF:<duration>,<title>` followed by URI line.
-- Skip blank lines and `#` comments except recognized tags.
-- Optional display title from first `#PLAYLIST:<name>` comment (app-specific; ignored by other players).
+- Skip blank lines and `#` comments except recognized tags (`#EXTM3U`, `#EXTINF`).
+- **Do not read or write `#PLAYLIST:`** — if present in a foreign playlist, treat as an ordinary comment and ignore.
 - URI forms:
   - `http://`, `https://` — use as-is
   - `content://`, `file://` — use as-is
@@ -152,7 +154,6 @@ Always emit:
 
 ```
 #EXTM3U
-#PLAYLIST:My Show Season 1
 #EXTINF:-1,Episode Title
 content://...
 ```
@@ -211,15 +212,17 @@ if (isPlaylistFile(uri, mimeType)) {
 ### `openPlaylistFile(Uri playlistUri)`
 
 1. Parse with `M3uReader`.
-2. If `entries.size() > 500` → show warning dialog; continue on confirm.
+2. If `entries.size() > 100` → show warning dialog; continue on confirm.
 3. `PlaylistAccessResolver.ensureAccess(activity, entries, playlistUri)`:
-   - For each entry, probe read access (`ContentResolver.openInputStream` or network HEAD/GET as appropriate).
-   - Bucket missing **local** entries by parent directory URI (document tree root or direct parent).
+   - Split entries into **local** (`content://`, `file://`, resolvable relative paths) vs **network** (`http://`, `https://`).
+   - **Network entries:** no upfront access probe — always included in the playable queue (playback errors handled at play time).
+   - **Local entries only:** probe read access (`ContentResolver.openInputStream` / `File.canRead()`).
+   - Bucket missing local entries by parent directory URI (document tree root or direct parent).
    - For each bucket (fewest prompts):
      - Try `ACTION_OPEN_DOCUMENT_TREE` on common ancestor if multiple siblings missing.
      - Else `ACTION_OPEN_DOCUMENT` with `EXTRA_ALLOW_MULTIPLE` for that folder's files.
    - Re-resolve relative URIs after grants.
-4. Build `apiMediaItems` from accessible entries only; set `filePlaylist=true`, `filePlaylistUri`, title.
+4. Build `apiMediaItems` from accessible local entries + all network entries; set `filePlaylist=true`, `filePlaylistUri`, `filePlaylistTitle` from playlist filename.
 5. Load index from `PlaylistPlaybackState.getIndex(playlistUri)`; clamp to queue size.
 6. For start item, position = `Prefs.getPosition(itemUri)` (existing store).
 7. Skipped entries: collect titles/URIs → `Toast` + optional `AlertDialog` list (if >3 skipped, dialog; else long toast).
@@ -301,12 +304,12 @@ On restore: if `filePlaylist`, reload M3U from URI (ignore external edits per 7.
    - App-private `files/playlists/*.m3u`
    - Registry entries for user-opened external playlists
    - Scoped folder scan (`SubtitleUtils` / `DocumentFile` walk for `*.m3u`) when `scopeUri` set
-3. **Row**: display title, path hint, item count, access badge (full / partial / none).
+3. **Row**: filename (sans `.m3u`), path hint, item count, access badge (full / partial / none — **local items only**).
 4. **Row tap** → edit screen. **Long-press / overflow**: rename, copy, delete.
 
 ### Edit screen
 
-- Title field (maps to `#PLAYLIST:` + default filename).
+- Filename shown/edited via rename action (no in-file title field).
 - Ordered `RecyclerView` with drag handle (`ItemTouchHelper`).
 - Row: title, URI snippet, remove button.
 - FAB / buttons: **Add from folder** (bulk), **Play** (hand off to `PlayerActivity.openPlaylistFile`).
@@ -321,8 +324,9 @@ On restore: if `filePlaylist`, reload M3U from URI (ignore external edits per 7.
 
 ### Rename (5.5)
 
-- Dialog: filename + optional display title.
+- Dialog: new filename (`.m3u` extension preserved or appended).
 - If SAF-backed external file: use `DocumentsContract.renameDocument` when available; else copy-delete pattern.
+- Update `PlaylistIndex` registry title from new filename.
 
 ### Copy (5.6)
 
@@ -332,13 +336,15 @@ On restore: if `filePlaylist`, reload M3U from URI (ignore external edits per 7.
 
 - `ACTION_OPEN_DOCUMENT_TREE` or reuse `scopeUri` if covers target.
 - `SubtitleUtils.listVideosInDirectory(dir)` — same ordering as folder playlist.
-- Append entries; warn if total > 500.
+- Append entries; warn if total > 100.
 
 ### Access badge (5.2)
 
-- **Full**: all entries readable.
-- **Partial**: ≥1 readable, ≥1 not.
-- **None**: zero readable (still editable).
+Evaluated on **local entries only** (network entries excluded from probe):
+
+- **Full**: all local entries readable (or playlist has no local entries).
+- **Partial**: ≥1 local readable, ≥1 local not.
+- **None**: local entries present but zero readable (still editable).
 
 ---
 
@@ -372,6 +378,7 @@ Unchanged rule: show when queue size > 1 (includes file playlist).
     {
       "uri": "content://...",
       "title": "My Playlist",
+      "comment": "title mirrors filename sans .m3u — not stored in M3U body",
       "source": "app_private|external|scoped_scan",
       "lastOpened": 1730000000000
     }
@@ -390,7 +397,9 @@ Unchanged rule: show when queue size > 1 (includes file playlist).
 `PlaylistAccessResolver` algorithm:
 
 ```
-missing = entries where !canRead(uri)
+network = entries where isNetworkUri(uri)          // always kept, never probed
+local = entries where !isNetworkUri(uri)
+missing = local where !canRead(uri)
 groups = groupByParentDirectory(missing)
 for (group in groups sorted by size desc):
   if (group.size > 1 && commonTreeGrantPossible(group)):
@@ -399,14 +408,17 @@ for (group in groups sorted by size desc):
   else:
     prompt OPEN_DOCUMENT with EXTRA_ALLOW_MULTIPLE for files in group
     takePersistableUriPermission each
-return updated entries + skipped list
+accessible = network + local where canRead(uri)
+skipped = local where !canRead(uri) after prompts
+return accessible + skipped
 ```
 
-`canRead`:
+`canRead` (local only — never called for network URIs):
 
 - `content://`: `openInputStream` succeeds or persisted grant exists.
 - `file://`: `File.canRead()`.
-- `http(s)`: assume readable (player will fail at playback); optional lightweight range request — **skip preflight for network** in v1 to avoid delay.
+
+`isNetworkUri`: `http://` or `https://` (reuse `Utils.isSupportedNetworkUri`).
 
 ---
 
@@ -419,7 +431,7 @@ Add to `values/strings.xml` (translate later via Weblate):
 - `playlist_empty` — "No playlists yet"
 - `playlist_access_full` / `_partial` / `_none`
 - `playlist_skipped_items` — "Skipped %d unavailable items"
-- `playlist_size_warning` — "This playlist has %d items (recommended max 500). Continue?"
+- `playlist_size_warning` — "This playlist has %d items (recommended max 100). Continue?"
 - `playlist_save_as` — "Save as playlist"
 - `playlist_add_from_folder` — "Add from folder"
 - `playlist_delete_confirm` — "Delete playlist \"%s\"?"
