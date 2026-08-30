@@ -13733,7 +13733,7 @@ public class PlayerActivity extends Activity {
         mPrefs.updateMedia(this, startUri, null);
         mPrefs.updatePosition(mPrefs.getPosition(startUri));
         playlistPlaybackState.setLastPlaylist(playlistUri, startIndex);
-        PlaylistIndex.register(this, filePlaylistTitle, PlaylistIndex.SOURCE_EXTERNAL);
+        PlaylistIndex.register(this, filePlaylistUri, filePlaylistTitle, PlaylistIndex.SOURCE_EXTERNAL);
         emptyState.hide();
         initializePlayer();
     }

@@ -322,7 +322,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
                         final File newFile = new File(oldFile.getParentFile(), name);
                         if (oldFile.renameTo(newFile)) {
                             PlaylistIndex.unregister(this, entry.uri);
-                            PlaylistIndex.register(this, newFile.toURI(),
+                            PlaylistIndex.register(this, Uri.fromFile(newFile),
                                     stripM3u(name), PlaylistIndex.SOURCE_APP_PRIVATE);
                             showPlaylistList();
                         }
