@@ -14054,7 +14054,7 @@ public class PlayerActivity extends Activity {
      * comes back where it left off; the last-session snapshot is dropped, so the next launch is the
      * menu rather than this clip covering it.
      */
-    void returnToMainMenu() {
+    private void returnToMainMenu() {
         if (emptyState.isVisible() && !haveMedia) {
             return;
         }
