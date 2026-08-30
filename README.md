@@ -10,6 +10,7 @@
  * Background playback
  * Background play auto-advance on video end
  * Last session resume
+ * Return to main menu from More
  * Auto-update off by default
  * Skip segments off by default
  * Repo keystore signing

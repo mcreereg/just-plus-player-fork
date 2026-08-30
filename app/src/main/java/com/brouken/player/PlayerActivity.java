@@ -9064,7 +9064,13 @@ public class PlayerActivity extends Activity {
         }
         items.add(MenuItem.rule());
         // Same two entry points the empty state offers (hence its strings), so opening something else is
-        // not a matter of first getting back to an empty player.
+        // not a matter of first getting back to an empty player. Home is still offered: closing this film
+        // without picking another one is a different errand, and the empty page is where rooms are joined
+        // and settings live without a clip covering them.
+        if (!emptyState.isVisible()) {
+            items.add(new MenuItem(R.drawable.ic_home_24dp, getString(R.string.button_main_menu),
+                    null, false, this::returnToMainMenu));
+        }
         items.add(new MenuItem(R.drawable.ic_folder_open_24dp, getString(R.string.empty_state_open), null, false, () -> openFile(mPrefs.mediaUri)));
         items.add(new MenuItem(R.drawable.ic_link_24dp, getString(R.string.empty_state_link), null, false, emptyState::askForLink));
         items.add(new MenuItem(R.drawable.ic_settings_24dp, getString(R.string.pref_title), null, false, this::openSettings));
@@ -14020,6 +14026,28 @@ public class PlayerActivity extends Activity {
         setEndControlsVisible(false);
         playerView.setControllerShowTimeoutMs(-1);
         emptyState.show();
+    }
+
+    /**
+     * Close this film and show the empty page — the same screen a launcher start with nothing to
+     * resume opens on. The timestamp for this file stays in the per-uri store, so opening it again
+     * comes back where it left off; the last-session snapshot is dropped, so the next launch is the
+     * menu rather than this clip covering it.
+     */
+    private void returnToMainMenu() {
+        if (emptyState.isVisible() && !haveMedia) {
+            return;
+        }
+        savePlayer();
+        cancelSleepTimer();
+        leaveRoom();
+        resetApiAccess();
+        mPrefs.updateMedia(this, null, null);
+        setIntent(new Intent(Intent.ACTION_MAIN).setClass(this, getClass()));
+        playerView.setCustomErrorMessage(null);
+        skipMediaAfterFatalError = false;
+        haveMedia = false;
+        initializePlayer();
     }
 
     void deleteMedia() {
