@@ -13167,6 +13167,9 @@ public class PlayerActivity extends Activity {
         playerView.setCustomErrorMessage(text);
         playerView.setControllerShowTimeoutMs(-1);
         playerView.showController();
+        // Still a player page, not the empty one — Home is the way off a failed clip without opening
+        // the gear first.
+        updateHomeButton();
     }
 
     void showError(ExoPlaybackException error) {
