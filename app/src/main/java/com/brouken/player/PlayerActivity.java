@@ -156,6 +156,14 @@ import androidx.media3.ui.TimeBar;
 
 import com.brouken.player.dtpv.DoubleTapPlayerView;
 import com.brouken.player.dtpv.youtube.YouTubeOverlay;
+import com.brouken.player.playlist.M3uEntry;
+import com.brouken.player.playlist.M3uPlaylist;
+import com.brouken.player.playlist.M3uReader;
+import com.brouken.player.playlist.PlaylistEditorActivity;
+import com.brouken.player.playlist.PlaylistIndex;
+import com.brouken.player.playlist.PlaylistOpenHelper;
+import com.brouken.player.playlist.PlaylistPlaybackState;
+import com.brouken.player.playlist.PlayerPlaylistExport;
 import com.brouken.player.skip.IntentSegmentsSource;
 import com.brouken.player.skip.NetworkSegmentsSource;
 import com.brouken.player.skip.SegmentFinder;
@@ -820,6 +828,13 @@ public class PlayerActivity extends Activity {
     boolean apiAccessPartial;
     /** Local folder opened as an ExoPlayer playlist (auto-advance), not a launcher api session. */
     boolean folderPlaylist;
+    /** Queue loaded from an on-disk .m3u playlist file. */
+    boolean filePlaylist;
+    Uri filePlaylistUri;
+    String filePlaylistTitle;
+    PlaylistPlaybackState playlistPlaybackState;
+    final PlaylistOpenHelper playlistOpenHelper = new PlaylistOpenHelper();
+    private boolean skipInitializePlayerAfterResult;
     /** Play after restoring a last session that was playing at the last disk checkpoint. */
     private boolean lastSessionPlay;
     String apiTitle;
@@ -1148,6 +1163,7 @@ public class PlayerActivity extends Activity {
         }
         // Rotate ASAP, before super/inflating to avoid glitches with activity launch animation
         mPrefs = new Prefs(this);
+        playlistPlaybackState = new PlaylistPlaybackState(this);
         systemVolume = mPrefs.systemVolume;
         playerVolume = mPrefs.volume;
         // Boost is session state kept in statics, so a launch must not inherit it from the last one
@@ -2766,9 +2782,14 @@ public class PlayerActivity extends Activity {
             mPrefs.mediaUri = uri;
             mPrefs.mediaType = session.type;
             mPrefs.suppressResume = false;
-            if ((session.folderPlaylist || session.apiAccess) && !session.items.isEmpty()) {
+            if ((session.folderPlaylist || session.filePlaylist || session.apiAccess) && !session.items.isEmpty()) {
                 applyRestoredPlaylist(session);
                 folderPlaylist = session.folderPlaylist;
+                filePlaylist = session.filePlaylist;
+                if (session.filePlaylistUri != null) {
+                    filePlaylistUri = Uri.parse(session.filePlaylistUri);
+                }
+                filePlaylistTitle = session.filePlaylistTitle;
                 apiAccess = session.apiAccess;
                 if (apiAccess) {
                     mPrefs.setPersistent(false);
@@ -2847,7 +2868,12 @@ public class PlayerActivity extends Activity {
         session.positionMs = mPrefs.getPosition();
         session.playing = playing;
         session.folderPlaylist = folderPlaylist;
+        session.filePlaylist = filePlaylist;
         session.apiAccess = apiAccess;
+        if (filePlaylistUri != null) {
+            session.filePlaylistUri = filePlaylistUri.toString();
+        }
+        session.filePlaylistTitle = filePlaylistTitle;
         session.playlistIndex = player != null ? player.getCurrentMediaItemIndex() : apiPlaylistStartIndex;
         session.title = apiTitle;
         session.thumbnail = apiThumbnailUri != null ? apiThumbnailUri.toString() : null;
@@ -3039,6 +3065,10 @@ public class PlayerActivity extends Activity {
         if (SubtitleUtils.isSubtitle(uri, type)) {
             handleSubtitles(uri);
         } else {
+            if (uri != null && isPlaylistMedia(uri, type)) {
+                openPlaylistFile(uri);
+                return;
+            }
             Bundle bundle = intent.getExtras();
             if (bundle != null) {
                 apiAccess = bundle.containsKey(API_POSITION) || bundle.containsKey(API_RETURN_RESULT)
@@ -3530,6 +3560,9 @@ public class PlayerActivity extends Activity {
         apiAccess = false;
         apiAccessPartial = false;
         folderPlaylist = false;
+        filePlaylist = false;
+        filePlaylistUri = null;
+        filePlaylistTitle = null;
         intentReturnResult = false;
         // The end-of-playback flag belongs to the session being reported. Left set, the next launcher
         // session inherits it and finish() reports a video watched to its end that the user just started.
@@ -5603,7 +5636,11 @@ public class PlayerActivity extends Activity {
         listLayout.setPadding(listPad, listPad, listPad, listPad);
 
         final TextView header = new TextView(this);
-        header.setText(getString(R.string.playlist));
+        if (filePlaylist && filePlaylistTitle != null && !filePlaylistTitle.isEmpty()) {
+            header.setText(getString(R.string.playlist) + " — " + filePlaylistTitle);
+        } else {
+            header.setText(getString(R.string.playlist));
+        }
         header.setTextColor(Color.WHITE);
         header.setTextSize(TypedValue.COMPLEX_UNIT_SP, ui.textTitle());
         header.setTypeface(Typeface.DEFAULT_BOLD);
@@ -9062,6 +9099,10 @@ public class PlayerActivity extends Activity {
             items.add(new MenuItem(R.drawable.ic_content_copy_24dp,
                     getString(R.string.stats_report_title), null, false, this::showPlayerState));
         }
+        if (apiMediaItems.size() > 1 && !apiAccess && !isTvBox) {
+            items.add(new MenuItem(R.drawable.ic_playlist_24dp, getString(R.string.playlist_save_as),
+                    null, false, this::saveQueueAsPlaylist));
+        }
         items.add(MenuItem.rule());
         // Same two entry points the empty state offers (hence its strings), so opening something else is
         // not a matter of first getting back to an empty player. Home is still offered: closing this film
@@ -10041,40 +10082,62 @@ public class PlayerActivity extends Activity {
 
                 final Uri uri = data.getData();
 
-                if (requestCode == REQUEST_CHOOSER_VIDEO) {
-                    boolean uriAlreadyTaken = false;
+                if (requestCode == REQUEST_CHOOSER_VIDEO && uri != null && isPlaylistMedia(uri, data.getType())) {
+                    try {
+                        getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } catch (SecurityException e) {
+                        e.printStackTrace();
+                    }
+                    openPlaylistFile(uri);
+                    skipInitializePlayerAfterResult = true;
+                } else {
+                    if (requestCode == REQUEST_CHOOSER_VIDEO) {
+                        boolean uriAlreadyTaken = false;
 
-                    // https://commonsware.com/blog/2020/06/13/count-your-saf-uri-permission-grants.html
-                    final ContentResolver contentResolver = getContentResolver();
-                    for (UriPermission persistedUri : contentResolver.getPersistedUriPermissions()) {
-                        if (persistedUri.getUri().equals(mPrefs.scopeUri)) {
-                            continue;
-                        } else if (persistedUri.getUri().equals(uri)) {
-                            uriAlreadyTaken = true;
-                        } else {
+                        // https://commonsware.com/blog/2020/06/13/count-your-saf-uri-permission-grants.html
+                        final ContentResolver contentResolver = getContentResolver();
+                        for (UriPermission persistedUri : contentResolver.getPersistedUriPermissions()) {
+                            if (persistedUri.getUri().equals(mPrefs.scopeUri)) {
+                                continue;
+                            } else if (persistedUri.getUri().equals(uri)) {
+                                uriAlreadyTaken = true;
+                            } else {
+                                try {
+                                    contentResolver.releasePersistableUriPermission(persistedUri.getUri(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                } catch (SecurityException e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                        }
+
+                        if (!uriAlreadyTaken && uri != null) {
                             try {
-                                contentResolver.releasePersistableUriPermission(persistedUri.getUri(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
                             } catch (SecurityException e) {
                                 e.printStackTrace();
                             }
                         }
                     }
 
-                    if (!uriAlreadyTaken && uri != null) {
-                        try {
-                            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                        } catch (SecurityException e) {
-                            e.printStackTrace();
-                        }
+                    mPrefs.setPersistent(true);
+                    mPrefs.updateMedia(this, uri, data.getType());
+
+                    if (requestCode == REQUEST_CHOOSER_VIDEO) {
+                        searchSubtitles();
                     }
                 }
-
-                mPrefs.setPersistent(true);
-                mPrefs.updateMedia(this, uri, data.getType());
-
-                if (requestCode == REQUEST_CHOOSER_VIDEO) {
-                    searchSubtitles();
-                }
+            }
+        } else if (requestCode == PlaylistOpenHelper.REQUEST_ACCESS_TREE) {
+            if (resultCode == RESULT_OK && data != null) {
+                playlistOpenHelper.onAccessTreeResult(this, data.getData());
+            } else {
+                playlistOpenHelper.onAccessCancelled(this);
+            }
+        } else if (requestCode == PlaylistOpenHelper.REQUEST_ACCESS_FILES) {
+            if (resultCode == RESULT_OK) {
+                playlistOpenHelper.onAccessFilesResult(this, data);
+            } else {
+                playlistOpenHelper.onAccessCancelled(this);
             }
         } else if (requestCode == REQUEST_CHOOSER_SUBTITLE || requestCode == REQUEST_CHOOSER_SUBTITLE_MEDIASTORE) {
             if (resultCode == RESULT_OK) {
@@ -10128,9 +10191,11 @@ public class PlayerActivity extends Activity {
 
         // Init here because onStart won't follow when app was only paused when file chooser was shown
         // (for example pop-up file chooser on tablets)
-        if (resultCode == RESULT_OK && alive) {
+        if (resultCode == RESULT_OK && alive && !skipInitializePlayerAfterResult
+                && !playlistOpenHelper.isActive()) {
             initializePlayer();
         }
+        skipInitializePlayerAfterResult = false;
     }
 
     private void handleSubtitles(Uri uri) {
@@ -10213,6 +10278,9 @@ public class PlayerActivity extends Activity {
     }
 
     public void initializePlayer() {
+        if (playlistOpenHelper.isActive()) {
+            return;
+        }
         boolean isNetworkUri = Utils.isSupportedNetworkUri(mPrefs.mediaUri);
         haveMedia = mPrefs.mediaUri != null && !mPrefs.suppressResume;
         // Only the transition it was set for may read it. A skip that never produced one would otherwise
@@ -11255,6 +11323,9 @@ public class PlayerActivity extends Activity {
                 final int idx = player.getCurrentMediaItemIndex();
                 if (idx >= 0 && idx < apiMediaItems.size()) {
                     apiPlaylistStartIndex = idx;
+                    if (filePlaylist && filePlaylistUri != null) {
+                        playlistPlaybackState.setIndex(filePlaylistUri, idx);
+                    }
                     final MediaItem current = apiMediaItems.get(idx);
                     if (current.localConfiguration != null) {
                         mPrefs.rememberCurrentMedia(current.localConfiguration.uri);
@@ -12519,7 +12590,12 @@ public class PlayerActivity extends Activity {
             final Intent intent = createBaseFileIntent(Intent.ACTION_OPEN_DOCUMENT, pickerInitialUri);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("video/*");
-            intent.putExtra(Intent.EXTRA_MIME_TYPES, Utils.supportedMimeTypesVideo);
+            final String[] openMimeTypes = new String[Utils.supportedMimeTypesVideo.length + 3];
+            System.arraycopy(Utils.supportedMimeTypesVideo, 0, openMimeTypes, 0, Utils.supportedMimeTypesVideo.length);
+            openMimeTypes[Utils.supportedMimeTypesVideo.length] = "audio/x-mpegurl";
+            openMimeTypes[Utils.supportedMimeTypesVideo.length + 1] = "application/x-mpegurl";
+            openMimeTypes[Utils.supportedMimeTypesVideo.length + 2] = "application/vnd.apple.mpegurl";
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, openMimeTypes);
 
             if (Build.VERSION.SDK_INT < 30) {
                 final ComponentName systemComponentName = Utils.getSystemComponent(this, intent);
@@ -13602,8 +13678,78 @@ public class PlayerActivity extends Activity {
      * Builds a playlist from every video in the current file's folder so ExoPlayer auto-advances
      * between them (same alphabetical order as the manual "next file" button).
      */
+    boolean isPlaylistMedia(final Uri uri, final String mimeType) {
+        if (!M3uReader.isPlaylistFile(uri, mimeType)) {
+            return false;
+        }
+        return M3uReader.sniffIsFilePlaylist(this, uri);
+    }
+
+    void openPlaylistFile(final Uri playlistUri) {
+        if (playlistUri == null) {
+            return;
+        }
+        resetApiAccess();
+        mPrefs.setPersistent(true);
+        try {
+            getContentResolver().takePersistableUriPermission(playlistUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (SecurityException ignored) {
+        }
+        playlistOpenHelper.begin(this, playlistUri);
+    }
+
+    void startFilePlaylistPlayback(final Uri playlistUri, final M3uPlaylist playlist,
+            final List<M3uEntry> entries) {
+        if (playlistUri == null || entries == null || entries.isEmpty()) {
+            Toast.makeText(this, R.string.playlist_open_error, Toast.LENGTH_LONG).show();
+            showEmptyState();
+            return;
+        }
+        filePlaylist = true;
+        filePlaylistUri = playlistUri;
+        filePlaylistTitle = playlist.displayName(this);
+        apiMediaItems.clear();
+        apiPlaylistSegments.clear();
+        int startIndex = playlistPlaybackState.getIndex(playlistUri);
+        if (startIndex >= entries.size()) {
+            startIndex = 0;
+        }
+        apiPlaylistStartIndex = startIndex;
+        apiPlaylistPositions = new long[entries.size()];
+        Arrays.fill(apiPlaylistPositions, C.TIME_UNSET);
+        for (final M3uEntry entry : entries) {
+            final MediaItem.Builder itemBuilder = new MediaItem.Builder().setUri(entry.uri);
+            if (entry.title != null) {
+                final MediaMetadata metadata = new MediaMetadata.Builder()
+                        .setTitle(entry.title)
+                        .setDisplayTitle(entry.title)
+                        .build();
+                itemBuilder.setMediaMetadata(metadata);
+            }
+            apiMediaItems.add(itemBuilder.build());
+            apiPlaylistSegments.add(null);
+        }
+        final Uri startUri = entries.get(startIndex).uri;
+        mPrefs.updateMedia(this, startUri, null);
+        mPrefs.updatePosition(mPrefs.getPosition(startUri));
+        playlistPlaybackState.setLastPlaylist(playlistUri, startIndex);
+        PlaylistIndex.register(this, filePlaylistTitle, PlaylistIndex.SOURCE_EXTERNAL);
+        hideEmptyState();
+        initializePlayer();
+    }
+
+    void saveQueueAsPlaylist() {
+        if (apiMediaItems.size() <= 1 || apiAccess) {
+            return;
+        }
+        PlayerPlaylistExport.offerQueue(apiMediaItems);
+        final Intent intent = new Intent(this, PlaylistEditorActivity.class);
+        intent.putExtra(PlaylistEditorActivity.EXTRA_SAVE_QUEUE, true);
+        startActivity(intent);
+    }
+
     private void buildFolderPlaylistIfPossible() {
-        if (apiAccess || apiAccessPartial || mPrefs.mediaUri == null) {
+        if (filePlaylist || apiAccess || apiAccessPartial || mPrefs.mediaUri == null) {
             return;
         }
         if (Utils.isSupportedNetworkUri(mPrefs.mediaUri)) {

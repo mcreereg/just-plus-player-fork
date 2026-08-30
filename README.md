@@ -14,6 +14,7 @@
  * Auto-update off by default
  * Skip segments off by default
  * Repo keystore signing
+ * M3U playlist files (open, resume, editor on phone/tablet)
 
 Video player for Android phones, tablets and Android TV, built on [Media3](https://github.com/androidx/media) (formerly [ExoPlayer](https://github.com/google/ExoPlayer)). Android 6.0 or later, one APK for all form factors.
 
@@ -55,6 +56,7 @@ This tree descends from [Just+ Player](https://github.com/just-plus-player/just-
  * A language can be promoted straight from the audio panel, without a trip to Settings
  * Sturdier audio: passthrough (AC3/DTS/TrueHD) is rebuilt after a seek or a resume, a format the device mishandles is learned and avoided, and playback survives the audio output disappearing
  * Remembers the last video, its timestamp and whether it was in a folder or playlist, so a swipe-away from recents comes back within a couple of seconds of where it left off
+ * **M3U playlists** — open `.m3u` files from the same picker as video (or from another app), resume per-item timestamps, batch folder access prompts for local entries, and a playlist editor on phone/tablet (create, reorder, bulk-add from folder, save-as from the current queue)
 
 **Watch together**
 
