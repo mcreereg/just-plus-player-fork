@@ -13037,18 +13037,19 @@ public class PlayerActivity extends Activity {
         if (!alive) {
             return true;
         }
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPip();
+        return inPip;
     }
 
     /**
      * Audio-only hold: the SurfaceView is gone and must not be waited on. PiP still has a
-     * picture, so it is excluded — the same test {@link #onStop} uses.
+     * picture, so it is excluded — the same test {@link #onStop} uses. Reads {@link #inPip}
+     * rather than {@link #isInPip()} so minSdk 23 lint does not see an API 24 call.
      */
     private boolean shouldHoldVideoOff() {
         if (alive || mPrefs == null || !mPrefs.backgroundPlayback) {
             return false;
         }
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !isInPip();
+        return !inPip;
     }
 
     /**

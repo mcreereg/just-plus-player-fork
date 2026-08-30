@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 
+import androidx.core.content.ContextCompat;
+
 import androidx.annotation.Nullable;
 import androidx.annotation.OptIn;
 import androidx.media3.common.Player;
@@ -54,13 +56,8 @@ public class PlaybackService extends MediaSessionService {
             instance.bindPlayer(player);
             return;
         }
-        final Intent intent = new Intent(app, PlaybackService.class);
         try {
-            if (Build.VERSION.SDK_INT >= 26) {
-                app.startForegroundService(intent);
-            } else {
-                app.startService(intent);
-            }
+            ContextCompat.startForegroundService(app, new Intent(app, PlaybackService.class));
         } catch (IllegalStateException e) {
             // Starting a service from a stopped activity can be refused. The instance path
             // above already covered a service that is up; nothing to advertise otherwise.
