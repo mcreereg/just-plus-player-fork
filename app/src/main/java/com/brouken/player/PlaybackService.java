@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 
+import androidx.core.content.ContextCompat;
+
 import androidx.annotation.Nullable;
 import androidx.annotation.OptIn;
 import androidx.media3.common.Player;
@@ -25,6 +27,8 @@ import androidx.media3.session.MediaSessionService;
  *
  * <p>One session at a time. The activity attaches after each rebuild and detaches before
  * {@link Player#release()}, so the session is never left pointing at a dead player.
+ * {@link #attach} is also called after a playlist step from {@code STATE_ENDED}, because the
+ * idle-player notification policy can stop this service in the gap between items.
  */
 @OptIn(markerClass = UnstableApi.class)
 public class PlaybackService extends MediaSessionService {
@@ -52,7 +56,13 @@ public class PlaybackService extends MediaSessionService {
             instance.bindPlayer(player);
             return;
         }
-        app.startService(new Intent(app, PlaybackService.class));
+        try {
+            ContextCompat.startForegroundService(app, new Intent(app, PlaybackService.class));
+        } catch (IllegalStateException e) {
+            // Starting a service from a stopped activity can be refused. The instance path
+            // above already covered a service that is up; nothing to advertise otherwise.
+            e.printStackTrace();
+        }
     }
 
     /**

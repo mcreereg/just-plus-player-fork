@@ -697,6 +697,10 @@ public class PlayerActivity extends Activity {
     // Video renderer is released while the screen is away so Media3 does not time out waiting for
     // a SurfaceView that is not coming back (see onStop). Restored in onStart.
     private boolean videoDisabledForBackground;
+    // View.post queues until attach. A stopped activity never attaches, so skip ticks, the
+    // position checkpoint and a sticky-quality apply would freeze the moment Home is pressed.
+    // The main looper keeps running those while audio is meant to outlive the screen.
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     // "Start playing once the player is ready". Read live by Utils.playIfCan, whose frame-rate probe runs on
     // a background thread: a snapshot taken before it started would still play after onStop cleared this.
     boolean play;
@@ -1097,7 +1101,7 @@ public class PlayerActivity extends Activity {
             // And for the same reason on the same tick: what a launcher gets back is what played.
             rememberReport();
             if (player != null && player.isPlaying()) {
-                playerView.postDelayed(this, SKIP_POLL_INTERVAL_MS);
+                mainHandler.postDelayed(this, SKIP_POLL_INTERVAL_MS);
             }
         }
     };
@@ -1122,8 +1126,8 @@ public class PlayerActivity extends Activity {
         @Override
         public void run() {
             checkpointPlayback();
-            if (playerView != null && haveMedia) {
-                playerView.postDelayed(this, POSITION_CHECKPOINT_MS);
+            if (haveMedia) {
+                mainHandler.postDelayed(this, POSITION_CHECKPOINT_MS);
             }
         }
     };
@@ -2896,17 +2900,12 @@ public class PlayerActivity extends Activity {
     }
 
     private void startPositionCheckpoint() {
-        if (playerView == null) {
-            return;
-        }
-        playerView.removeCallbacks(positionCheckpointRunnable);
-        playerView.postDelayed(positionCheckpointRunnable, POSITION_CHECKPOINT_MS);
+        mainHandler.removeCallbacks(positionCheckpointRunnable);
+        mainHandler.postDelayed(positionCheckpointRunnable, POSITION_CHECKPOINT_MS);
     }
 
     private void stopPositionCheckpoint() {
-        if (playerView != null) {
-            playerView.removeCallbacks(positionCheckpointRunnable);
-        }
+        mainHandler.removeCallbacks(positionCheckpointRunnable);
     }
 
     /**
@@ -4743,17 +4742,12 @@ public class PlayerActivity extends Activity {
     // supposed to undo the skip. Its own 3s timer takes it away instead.
 
     private void startSkipPolling() {
-        if (playerView == null) {
-            return;
-        }
-        playerView.removeCallbacks(skipRunnable);
-        playerView.post(skipRunnable);
+        mainHandler.removeCallbacks(skipRunnable);
+        mainHandler.post(skipRunnable);
     }
 
     private void stopSkipPolling() {
-        if (playerView != null) {
-            playerView.removeCallbacks(skipRunnable);
-        }
+        mainHandler.removeCallbacks(skipRunnable);
     }
 
     private void parseApiPlaylist(Bundle bundle, Uri dataUri) {
@@ -10562,6 +10556,11 @@ public class PlayerActivity extends Activity {
         playerView.setPlayer(player);
 
         PlaybackService.attach(this, player);
+        // skipToNext can rebuild while the activity is stopped. Video must be off before
+        // prepare() or Media3 waits two seconds for a SurfaceView that is not coming back.
+        if (shouldHoldVideoOff()) {
+            setVideoDisabledForBackground(true);
+        }
 
         playerView.setControllerShowTimeoutMs(-1);
 
@@ -10876,7 +10875,9 @@ public class PlayerActivity extends Activity {
 
     // Start a fresh window, remembering how much had been transferred when it opened.
     private void armLoadWatchdog() {
-        if (playerView == null) {
+        // A next-episode buffer while Home is pressed must not time out in the background:
+        // the snackbar has nowhere to go, and stopping the player would kill the queue.
+        if (playerView == null || !alive) {
             return;
         }
         cancelLoadWatchdog();
@@ -10907,7 +10908,8 @@ public class PlayerActivity extends Activity {
      * format, so it is exempt.
      */
     private void videoFreezeTick() {
-        if (player == null || isScrubbing || player.getVideoFormat() == null) {
+        if (player == null || isScrubbing || videoDisabledForBackground
+                || player.getVideoFormat() == null) {
             return;
         }
         final int output = videoOutputCount();
@@ -11285,6 +11287,15 @@ public class PlayerActivity extends Activity {
             hideSkipButton();
             cancelSegmentFinder();
             setupSkipSource();
+            // A background session must keep the picture off across the step: a rebuild or a
+            // quality swap can reset the flag, and Media3 would then wait on a dead SurfaceView.
+            // PiP keeps the picture, so it is skipped (same test as onStop).
+            if (shouldHoldVideoOff()) {
+                setVideoDisabledForBackground(true);
+            }
+            if (isBackgroundPlaybackSession()) {
+                PlaybackService.attach(PlayerActivity.this, player);
+            }
             // The next episode of the same playlist — the one case the room can follow.
             final boolean stepped = steppedBySkip;
             steppedBySkip = false;
@@ -11367,9 +11378,7 @@ public class PlayerActivity extends Activity {
             maybeSearchSubtitlesOnline(tracks);
             // Apply a sticky quality choice to a freshly auto-advanced episode once its variants are known.
             // Posted so the reinitialisation never runs while listeners are being dispatched.
-            if (playerView != null) {
-                playerView.post(PlayerActivity.this::applyStickyQuality);
-            }
+            mainHandler.post(PlayerActivity.this::applyStickyQuality);
         }
 
         // A pause only latches; onIsPlayingChanged is where the AudioTrack gets rebuilt. Immediately rather
@@ -11643,12 +11652,20 @@ public class PlayerActivity extends Activity {
             // above.
             } else if (state == Player.STATE_ENDED && haveMedia) {
                 cancelLoadWatchdog();
-                playbackFinished = true;
                 // A single item, or the last of a playlist, ends here rather than in an end-of-item pause.
+                // Video-disabled background play can also land here mid-queue: ExoPlayer usually
+                // auto-advances, but a disabled video renderer or a stuck text renderer has been
+                // seen to report ENDED with a next item still waiting.
                 if (sleepAtEndOfItem) {
+                    playbackFinished = true;
                     fireSleepTimer();
-                } else if (apiAccess) {
-                    finish();
+                } else if (advanceAfterEnded()) {
+                    Utils.log("background: advanced after ended");
+                } else {
+                    playbackFinished = true;
+                    if (apiAccess) {
+                        finish();
+                    }
                 }
             }
         }
@@ -13005,6 +13022,64 @@ public class PlayerActivity extends Activity {
             return true;
         }
         return mPrefs != null && mPrefs.backgroundPlayback;
+    }
+
+    /**
+     * Home / screen-off / PiP with the background-audio setting on. Unlike
+     * {@link #shouldKeepPlayingInBackground} this does not require {@code playWhenReady}: a
+     * MediaSession that paused us on {@code STATE_ENDED} must not also cancel the step to the
+     * next file.
+     */
+    private boolean isBackgroundPlaybackSession() {
+        if (mPrefs == null || !mPrefs.backgroundPlayback || !haveMedia) {
+            return false;
+        }
+        if (!alive) {
+            return true;
+        }
+        return inPip;
+    }
+
+    /**
+     * Audio-only hold: the SurfaceView is gone and must not be waited on. PiP still has a
+     * picture, so it is excluded — the same test {@link #onStop} uses. Reads {@link #inPip}
+     * rather than {@link #isInPip()} so minSdk 23 lint does not see an API 24 call.
+     */
+    private boolean shouldHoldVideoOff() {
+        if (alive || mPrefs == null || !mPrefs.backgroundPlayback) {
+            return false;
+        }
+        return !inPip;
+    }
+
+    /**
+     * Start the next queued file after a natural end. Playlist items first (ExoPlayer's own
+     * auto-advance, or a seek when that did not fire); then the leftover next-file URI while
+     * background audio is meant to keep going.
+     *
+     * @return true when another item is now loading or playing
+     */
+    private boolean advanceAfterEnded() {
+        if (player == null || !BackgroundAdvance.shouldAdvance(
+                sleepAtEndOfItem,
+                player.hasNextMediaItem(),
+                nextUri != null,
+                isBackgroundPlaybackSession())) {
+            return false;
+        }
+        playbackFinished = false;
+        if (BackgroundAdvance.usePlaylistNext(player.hasNextMediaItem())) {
+            player.seekToNextMediaItem();
+            player.play();
+            if (shouldHoldVideoOff()) {
+                setVideoDisabledForBackground(true);
+            }
+            PlaybackService.attach(this, player);
+            return true;
+        }
+        lastSessionPlay = true;
+        skipToNext();
+        return true;
     }
 
     /**
