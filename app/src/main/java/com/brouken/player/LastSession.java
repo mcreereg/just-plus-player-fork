@@ -21,10 +21,13 @@ final class LastSession {
     long positionMs = -1L;
     boolean playing;
     boolean folderPlaylist;
+    boolean filePlaylist;
     boolean apiAccess;
     int playlistIndex = -1;
     String title;
     String thumbnail;
+    String filePlaylistUri;
+    String filePlaylistTitle;
     String[] headers;
     final List<Item> items = new ArrayList<>();
     long[] episodePositions;
@@ -45,10 +48,13 @@ final class LastSession {
             json.put("positionMs", positionMs);
             json.put("playing", playing);
             json.put("folder", folderPlaylist);
+            json.put("file", filePlaylist);
             json.put("api", apiAccess);
             json.put("index", playlistIndex);
             put(json, "title", title);
             put(json, "thumbnail", thumbnail);
+            put(json, "filePlaylistUri", filePlaylistUri);
+            put(json, "filePlaylistTitle", filePlaylistTitle);
             if (headers != null) {
                 final JSONArray array = new JSONArray();
                 for (String header : headers) {
@@ -95,10 +101,13 @@ final class LastSession {
             session.positionMs = json.optLong("positionMs", -1L);
             session.playing = json.optBoolean("playing", false);
             session.folderPlaylist = json.optBoolean("folder", false);
+            session.filePlaylist = json.optBoolean("file", false);
             session.apiAccess = json.optBoolean("api", false);
             session.playlistIndex = json.optInt("index", -1);
             session.title = optString(json, "title");
             session.thumbnail = optString(json, "thumbnail");
+            session.filePlaylistUri = optString(json, "filePlaylistUri");
+            session.filePlaylistTitle = optString(json, "filePlaylistTitle");
             session.headers = optStringArray(json.optJSONArray("headers"));
             final JSONArray items = json.optJSONArray("items");
             if (items != null) {

@@ -10,6 +10,8 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+
+import com.brouken.player.playlist.PlaylistEditorActivity;
 import android.content.pm.ActivityInfo;
 import android.net.Uri;
 import android.os.Build;
@@ -53,8 +55,17 @@ class EmptyState {
         final TextView subtitle = activity.findViewById(R.id.empty_state_subtitle);
         final View open = activity.findViewById(R.id.empty_state_open);
         final View link = activity.findViewById(R.id.empty_state_link);
+        final View playlists = activity.findViewById(R.id.empty_state_playlists);
         final View room = activity.findViewById(R.id.empty_state_room);
         final View settings = activity.findViewById(R.id.empty_state_settings);
+
+        if (PlayerActivity.isTvBox) {
+            playlists.setVisibility(View.GONE);
+        } else {
+            playlists.setVisibility(View.VISIBLE);
+            playlists.setOnClickListener(v -> activity.startActivity(
+                    new Intent(activity, PlaylistEditorActivity.class)));
+        }
 
         // No video to match, so neither the orientation nor the brightness preference has anything to say
         // here: hand the page back to the system, whichever way the device is held and however bright it
@@ -95,6 +106,11 @@ class EmptyState {
                     .setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
             link.setPadding(Utils.dpToPx(26), padV, Utils.dpToPx(28), padV);
             link.setMinimumHeight(Utils.dpToPx(64));
+            setViewSize(activity.findViewById(R.id.empty_state_playlists_icon), 28);
+            ((TextView) activity.findViewById(R.id.empty_state_playlists_label))
+                    .setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+            playlists.setPadding(Utils.dpToPx(26), padV, Utils.dpToPx(28), padV);
+            playlists.setMinimumHeight(Utils.dpToPx(64));
             setViewSize(activity.findViewById(R.id.empty_state_room_icon), 28);
             ((TextView) activity.findViewById(R.id.empty_state_room_label))
                     .setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
@@ -117,6 +133,9 @@ class EmptyState {
             setViewSize(activity.findViewById(R.id.empty_state_link_icon), ui.dpS(20));
             ((TextView) activity.findViewById(R.id.empty_state_link_label))
                     .setTextSize(TypedValue.COMPLEX_UNIT_SP, ui.sp(16));
+            setViewSize(activity.findViewById(R.id.empty_state_playlists_icon), ui.dpS(20));
+            ((TextView) activity.findViewById(R.id.empty_state_playlists_label))
+                    .setTextSize(TypedValue.COMPLEX_UNIT_SP, ui.sp(16));
             setViewSize(activity.findViewById(R.id.empty_state_room_icon), ui.dpS(20));
             ((TextView) activity.findViewById(R.id.empty_state_room_label))
                     .setTextSize(TypedValue.COMPLEX_UNIT_SP, ui.sp(16));
@@ -132,7 +151,7 @@ class EmptyState {
             overlay.bringToFront();
         }
 
-        final View[] items = {mark, title, subtitle, open, link, room, settings};
+        final View[] items = {mark, title, subtitle, open, link, playlists, room, settings};
 
         // Nothing to reveal when the page is already on screen: coming back from the background releases
         // the player (savePlayer) and rebuilds it, landing here again on the very page the user is looking

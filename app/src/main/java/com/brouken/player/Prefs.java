@@ -910,16 +910,23 @@ class Prefs {
     }
 
     public long getPosition() {
+        return getPosition(mediaUri);
+    }
+
+    public long getPosition(final Uri uri) {
         if (!persistentMode) {
             return nonPersitentPosition;
         }
+        if (uri == null) {
+            return 0L;
+        }
 
-        Object val = positions.get(mediaUri.toString());
+        Object val = positions.get(uri.toString());
         if (val != null)
             return (long) val;
 
         // Return position for uri from limited scope (loaded after using Next action)
-        final String searchId = documentIdentity(mediaUri);
+        final String searchId = documentIdentity(uri);
         if (searchId != null) {
             final Object[] keys = positions.keySet().toArray();
             for (int i = keys.length; i > 0; i--) {
