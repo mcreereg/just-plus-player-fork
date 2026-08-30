@@ -8,6 +8,7 @@
 
  * Folder playlist auto-next
  * Background playback
+ * Background play auto-advance on video end
  * Last session resume
  * Auto-update off by default
  * Skip segments off by default
