@@ -201,6 +201,7 @@
     <string name="button_quality">Video quality</string>
     <string name="button_audio_track">Audio</string>
     <string name="button_more">More</string>
+    <string name="button_main_menu">Return to main menu</string>
     <string name="button_update">Update available</string>
     <string name="audio_title">Audio track</string>
     <string name="subtitle_title">Subtitles</string>

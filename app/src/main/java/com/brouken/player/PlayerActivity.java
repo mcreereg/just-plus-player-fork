@@ -582,6 +582,7 @@ public class PlayerActivity extends Activity {
     private ImageButton buttonQuality;
     private ImageButton buttonAudio;
     private ImageButton buttonMore;
+    private ImageButton buttonHome;
     private ImageButton buttonUpdate;
     private ImageButton buttonSkipOffset;
     private android.app.Dialog qualityDialog;
@@ -1394,6 +1395,15 @@ public class PlayerActivity extends Activity {
             return true;
         });
 
+        // Way back to the empty page without having to open a different file first, or wait for this
+        // one to end. Hidden while that page is already in front.
+        buttonHome = new ImageButton(this, null, 0, R.style.ExoStyledControls_Button_Bottom);
+        buttonHome.setImageResource(R.drawable.ic_home_24dp);
+        buttonHome.setId(View.generateViewId());
+        buttonHome.setContentDescription(getString(R.string.button_main_menu));
+        buttonHome.setVisibility(View.GONE);
+        buttonHome.setOnClickListener(view -> returnToMainMenu());
+
         // The only ambient sign that a release is waiting. It exists solely while one is (see
         // refreshUpdateButton) and lives in the controls, which are on screen only when the user asked for
         // them — so nothing is ever interrupted, and the brand colour is what makes it findable anyway.
@@ -2173,6 +2183,9 @@ public class PlayerActivity extends Activity {
         // "Update available" sits immediately before the gear — one insertion point that lands in the same
         // place on a phone and on TV, because the gear ends the bottom bar on both.
         controls.addView(buttonUpdate);
+        // Home sits with the gear: both are ways of leaving this film, and the gear already ends the
+        // bottom bar on phone and TV. Hidden while the empty page is in front (see updateHomeButton).
+        controls.addView(buttonHome);
         // "More" (overflow) always lives at the end of the bottom bar.
         controls.addView(buttonMore);
 
@@ -2187,6 +2200,7 @@ public class PlayerActivity extends Activity {
         }
         styleClusterButton(buttonUpdate);
         refreshUpdateButton();
+        styleClusterButton(buttonHome);
         styleClusterButton(buttonMore);
         styleClusterButton(buttonAspectRatio);
         if (buttonPiP != null) {
@@ -9064,7 +9078,13 @@ public class PlayerActivity extends Activity {
         }
         items.add(MenuItem.rule());
         // Same two entry points the empty state offers (hence its strings), so opening something else is
-        // not a matter of first getting back to an empty player.
+        // not a matter of first getting back to an empty player. Home is still offered: closing this film
+        // without picking another one is a different errand, and the empty page is where rooms are joined
+        // and settings live without a clip covering them.
+        if (!emptyState.isVisible()) {
+            items.add(new MenuItem(R.drawable.ic_home_24dp, getString(R.string.button_main_menu),
+                    null, false, this::returnToMainMenu));
+        }
         items.add(new MenuItem(R.drawable.ic_folder_open_24dp, getString(R.string.empty_state_open), null, false, () -> openFile(mPrefs.mediaUri)));
         items.add(new MenuItem(R.drawable.ic_link_24dp, getString(R.string.empty_state_link), null, false, emptyState::askForLink));
         items.add(new MenuItem(R.drawable.ic_settings_24dp, getString(R.string.pref_title), null, false, this::openSettings));
@@ -10576,6 +10596,7 @@ public class PlayerActivity extends Activity {
 
         if (haveMedia) {
             emptyState.hide();
+            updateHomeButton();
             if (isNetworkUri) {
                 // Reads as a light rail ahead of the playhead, the way the design shows a buffering stream.
                 timeBar.setBufferedColor(0xC0FFFFFF);
@@ -10692,6 +10713,7 @@ public class PlayerActivity extends Activity {
             stopPositionCheckpoint();
             playerView.showController();
             emptyState.show();
+            updateHomeButton();
         }
 
         player.addListener(playerListener);
@@ -14020,6 +14042,36 @@ public class PlayerActivity extends Activity {
         setEndControlsVisible(false);
         playerView.setControllerShowTimeoutMs(-1);
         emptyState.show();
+        updateHomeButton();
+    }
+
+    /**
+     * Close this film and show the empty page — the same screen a launcher start with nothing to
+     * resume opens on. The timestamp for this file stays in the per-uri store, so opening it again
+     * comes back where it left off; the last-session snapshot is dropped, so the next launch is the
+     * menu rather than this clip covering it.
+     */
+    void returnToMainMenu() {
+        if (emptyState.isVisible() && !haveMedia) {
+            return;
+        }
+        savePlayer();
+        cancelSleepTimer();
+        leaveRoom();
+        resetApiAccess();
+        mPrefs.updateMedia(this, null, null);
+        setIntent(new Intent(Intent.ACTION_MAIN).setClass(this, getClass()));
+        playerView.setCustomErrorMessage(null);
+        skipMediaAfterFatalError = false;
+        haveMedia = false;
+        initializePlayer();
+    }
+
+    /** Home is only a way <em>to</em> the empty page, so it has no business sitting on it. */
+    private void updateHomeButton() {
+        if (buttonHome != null) {
+            buttonHome.setVisibility(emptyState.isVisible() ? View.GONE : View.VISIBLE);
+        }
     }
 
     void deleteMedia() {
@@ -14099,7 +14151,11 @@ public class PlayerActivity extends Activity {
         Utils.setButtonEnabled(this, buttonAspectRatio, enable);
         // The gear stays reachable with no player: its menu drops the player-dependent rows by itself
         // (see showMoreMenu) and keeps "Open" and the settings screen — the way out of a failed clip.
+        // Home is the other way out of a failed clip, so it stays live for the same reason.
         Utils.setButtonEnabled(this, exoSettings, true);
+        if (buttonHome != null) {
+            Utils.setButtonEnabled(this, buttonHome, true);
+        }
     }
 
     private void scaleStart() {
