@@ -43,9 +43,9 @@ public class PlaylistEditorActivity extends AppCompatActivity {
     private static final int REQUEST_COPY = 33;
 
     private RecyclerView recyclerView;
-    private boolean editingEntries;
+    private boolean editingMode;
     private Uri editingUri;
-    private final List<M3uEntry> editingEntries = new ArrayList<>();
+    private final List<M3uEntry> entryList = new ArrayList<>();
     private EntryAdapter entryAdapter;
     private ListAdapter listAdapter;
 
@@ -80,7 +80,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
     }
 
     private void showPlaylistList() {
-        editingEntries = false;
+        editingMode = false;
         if (getSupportActionBar() != null) {
             getSupportActionBar().setTitle(R.string.playlist_editor);
         }
@@ -93,8 +93,8 @@ public class PlaylistEditorActivity extends AppCompatActivity {
     private void openEditor(final Uri uri) {
         try {
             final M3uPlaylist playlist = M3uReader.read(this, uri);
-            editingEntries.clear();
-            editingEntries.addAll(playlist.entries);
+            entryList.clear();
+            entryList.addAll(playlist.entries);
             showEntryEditor(uri);
         } catch (Exception e) {
             Toast.makeText(this, R.string.playlist_open_error, Toast.LENGTH_LONG).show();
@@ -103,10 +103,10 @@ public class PlaylistEditorActivity extends AppCompatActivity {
     }
 
     private void showEntryEditor(final Uri uri) {
-        editingEntries = true;
+        editingMode = true;
         editingUri = uri;
         if (getSupportActionBar() != null) {
-            getSupportActionBar().setTitle(new M3uPlaylist(uri, editingEntries).displayName(this));
+            getSupportActionBar().setTitle(new M3uPlaylist(uri, entryList).displayName(this));
         }
         entryAdapter = new EntryAdapter();
         recyclerView.setAdapter(entryAdapter);
@@ -121,7 +121,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
                 if (from < 0 || to < 0) {
                     return false;
                 }
-                Collections.swap(editingEntries, from, to);
+                Collections.swap(entryList, from, to);
                 entryAdapter.notifyItemMoved(from, to);
                 return true;
             }
@@ -134,14 +134,14 @@ public class PlaylistEditorActivity extends AppCompatActivity {
     }
 
     private void loadQueueFromPlayer() {
-        editingEntries.clear();
+        entryList.clear();
         // Filled when launched from PlayerActivity via static hand-off
-        editingEntries.addAll(PlayerPlaylistExport.takeQueue());
+        entryList.addAll(PlayerPlaylistExport.takeQueue());
     }
 
     @Override
     public boolean onCreateOptionsMenu(final Menu menu) {
-        if (!editingEntries) {
+        if (!editingMode) {
             getMenuInflater().inflate(R.menu.menu_playlist_list, menu);
         } else {
             getMenuInflater().inflate(R.menu.menu_playlist_edit, menu);
@@ -153,7 +153,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
     public boolean onOptionsItemSelected(final MenuItem item) {
         final int id = item.getItemId();
         if (id == android.R.id.home) {
-            if (editingEntries && getIntent().getStringExtra(EXTRA_PLAYLIST_URI) == null
+            if (editingMode && getIntent().getStringExtra(EXTRA_PLAYLIST_URI) == null
                     && !getIntent().getBooleanExtra(EXTRA_SAVE_QUEUE, false)) {
                 showPlaylistList();
             } else {
@@ -193,7 +193,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
                         return;
                     }
                     final Uri uri = PlaylistIndex.appPrivateUri(this, name);
-                    editingEntries.clear();
+                    entryList.clear();
                     showEntryEditor(uri);
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -201,9 +201,9 @@ public class PlaylistEditorActivity extends AppCompatActivity {
     }
 
     private void saveCurrentPlaylist() {
-        if (editingEntries.size() > PlaylistPlaybackState.softItemLimit()) {
+        if (entryList.size() > PlaylistPlaybackState.softItemLimit()) {
             new AlertDialog.Builder(this)
-                    .setMessage(getString(R.string.playlist_size_warning, editingEntries.size()))
+                    .setMessage(getString(R.string.playlist_size_warning, entryList.size()))
                     .setPositiveButton(android.R.string.ok, (d, w) -> writePlaylist())
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
@@ -214,7 +214,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
 
     private void writePlaylist() {
         try {
-            final M3uPlaylist playlist = new M3uPlaylist(editingUri, editingEntries);
+            final M3uPlaylist playlist = new M3uPlaylist(editingUri, entryList);
             final OutputStream output;
             if (ContentResolver.SCHEME_FILE.equals(editingUri.getScheme())) {
                 output = new FileOutputStream(editingUri.getPath());
@@ -226,7 +226,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
             }
             M3uWriter.write(playlist, output);
             output.close();
-            PlaylistIndex.register(this, playlist.displayName(this), PlaylistIndex.SOURCE_APP_PRIVATE);
+            PlaylistIndex.register(this, editingUri, playlist.displayName(this), PlaylistIndex.SOURCE_APP_PRIVATE);
             Toast.makeText(this, R.string.playlist_save_as, Toast.LENGTH_SHORT).show();
             if (getIntent().getBooleanExtra(EXTRA_SAVE_QUEUE, false)) {
                 finish();
@@ -266,14 +266,14 @@ public class PlaylistEditorActivity extends AppCompatActivity {
             final List<Uri> videos = SubtitleUtils.listVideosInDirectory(root);
             for (final Uri video : videos) {
                 final String title = video.getLastPathSegment();
-                editingEntries.add(new M3uEntry(video.toString(), video, title, -1));
+                entryList.add(new M3uEntry(video.toString(), video, title, -1));
             }
             if (entryAdapter != null) {
                 entryAdapter.notifyDataSetChanged();
             }
-            if (editingEntries.size() > PlaylistPlaybackState.softItemLimit()) {
+            if (entryList.size() > PlaylistPlaybackState.softItemLimit()) {
                 Toast.makeText(this,
-                        getString(R.string.playlist_size_warning, editingEntries.size()),
+                        getString(R.string.playlist_size_warning, entryList.size()),
                         Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == REQUEST_COPY && resultCode == RESULT_OK && data != null) {
@@ -282,11 +282,11 @@ public class PlaylistEditorActivity extends AppCompatActivity {
                 return;
             }
             try {
-                final M3uPlaylist playlist = new M3uPlaylist(dest, editingEntries);
+                final M3uPlaylist playlist = new M3uPlaylist(dest, entryList);
                 try (OutputStream output = getContentResolver().openOutputStream(dest)) {
                     M3uWriter.write(playlist, output);
                 }
-                PlaylistIndex.register(this, playlist.displayName(this), PlaylistIndex.SOURCE_EXTERNAL);
+                PlaylistIndex.register(this, dest, playlist.displayName(this), PlaylistIndex.SOURCE_EXTERNAL);
                 Toast.makeText(this, R.string.playlist_save_as, Toast.LENGTH_SHORT).show();
             } catch (Exception e) {
                 Toast.makeText(this, R.string.playlist_open_error, Toast.LENGTH_LONG).show();
@@ -322,7 +322,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
                         final File newFile = new File(oldFile.getParentFile(), name);
                         if (oldFile.renameTo(newFile)) {
                             PlaylistIndex.unregister(this, entry.uri);
-                            PlaylistIndex.register(this,
+                            PlaylistIndex.register(this, newFile.toURI(),
                                     stripM3u(name), PlaylistIndex.SOURCE_APP_PRIVATE);
                             showPlaylistList();
                         }
@@ -384,9 +384,9 @@ public class PlaylistEditorActivity extends AppCompatActivity {
                                 promptRename(entry);
                             } else if (which == 1) {
                                 editingUri = entry.uri;
-                                editingEntries.clear();
+                                entryList.clear();
                                 try {
-                                    editingEntries.addAll(M3uReader.read(
+                                    entryList.addAll(M3uReader.read(
                                             PlaylistEditorActivity.this, entry.uri).entries);
                                 } catch (Exception ignored) {
                                 }
@@ -429,13 +429,13 @@ public class PlaylistEditorActivity extends AppCompatActivity {
 
         @Override
         public void onBindViewHolder(@NonNull Holder holder, int position) {
-            final M3uEntry entry = editingEntries.get(position);
+            final M3uEntry entry = entryList.get(position);
             holder.title.setText(entry.title);
             holder.uri.setText(entry.uri != null ? entry.uri.toString() : entry.uriString);
             holder.remove.setOnClickListener(v -> {
                 final int pos = holder.getBindingAdapterPosition();
-                if (pos >= 0 && pos < editingEntries.size()) {
-                    editingEntries.remove(pos);
+                if (pos >= 0 && pos < entryList.size()) {
+                    entryList.remove(pos);
                     notifyItemRemoved(pos);
                 }
             });
@@ -443,7 +443,7 @@ public class PlaylistEditorActivity extends AppCompatActivity {
 
         @Override
         public int getItemCount() {
-            return editingEntries.size();
+            return entryList.size();
         }
 
         class Holder extends RecyclerView.ViewHolder {

@@ -26,7 +26,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-class SubtitleUtils {
+public class SubtitleUtils {
 
     /**
      * Span types that say how a subtitle should <em>look</em>, as opposed to what it means. Colour,

@@ -78,7 +78,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.MissingResourceException;
 
-class Utils {
+public class Utils {
 
     public static final String FEATURE_FIRE_TV = "amazon.hardware.fire_tv";
 

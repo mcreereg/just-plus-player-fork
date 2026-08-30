@@ -777,7 +777,7 @@ public class PlayerActivity extends Activity {
     private boolean alive;
     public static boolean focusPlay = false;
     private Uri nextUri;
-    static boolean isTvBox;
+    public static boolean isTvBox;
     public static boolean locked = false;
     private Thread nextUriThread;
     private Thread segmentFinderThread;
@@ -12664,7 +12664,7 @@ public class PlayerActivity extends Activity {
         return intent;
     }
 
-    void safelyStartActivityForResult(final Intent intent, final int code) {
+    public void safelyStartActivityForResult(final Intent intent, final int code) {
         if (intent.resolveActivity(getPackageManager()) == null)
             showSnack(getText(R.string.error_files_missing).toString(), intent.toString());
         else
@@ -13698,11 +13698,11 @@ public class PlayerActivity extends Activity {
         playlistOpenHelper.begin(this, playlistUri);
     }
 
-    void startFilePlaylistPlayback(final Uri playlistUri, final M3uPlaylist playlist,
+    public void startFilePlaylistPlayback(final Uri playlistUri, final M3uPlaylist playlist,
             final List<M3uEntry> entries) {
         if (playlistUri == null || entries == null || entries.isEmpty()) {
             Toast.makeText(this, R.string.playlist_open_error, Toast.LENGTH_LONG).show();
-            showEmptyState();
+            emptyState.show();
             return;
         }
         filePlaylist = true;
@@ -13734,7 +13734,7 @@ public class PlayerActivity extends Activity {
         mPrefs.updatePosition(mPrefs.getPosition(startUri));
         playlistPlaybackState.setLastPlaylist(playlistUri, startIndex);
         PlaylistIndex.register(this, filePlaylistTitle, PlaylistIndex.SOURCE_EXTERNAL);
-        hideEmptyState();
+        emptyState.hide();
         initializePlayer();
     }
 
